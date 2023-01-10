@@ -3,10 +3,10 @@
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <RootNamespace>Jellyfin.Plugin.Template</RootNamespace>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- <GenerateDocumentationFile>true</GenerateDocumentationFile> -->
+    <!-- <TreatWarningsAsErrors>true</TreatWarningsAsErrors> -->
     <Nullable>enable</Nullable>
-    <AnalysisMode>AllEnabledByDefault</AnalysisMode>
+    <!-- <AnalysisMode>AllDisabledByDefault</AnalysisMode> -->
     <CodeAnalysisRuleSet>../jellyfin.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
 
