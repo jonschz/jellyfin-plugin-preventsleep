@@ -8,7 +8,7 @@ At this time, this plugin is in an early development stage and not part of the J
 
 ## Installation
 
-To install the compiled binary, download the `.dll`, go to your plugin folder (see [here](https://jellyfin.org/docs/general/server/plugins/)), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
+Compiled binaries can be downloaded [here](https://github.com/jonschz/jellyfin-plugin-preventsleep/releases). To install the compiled binary, download the `.dll`, go to your plugin folder (see [here](https://jellyfin.org/docs/general/server/plugins/)), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
 
 To build this plugin, follow e.g. [these steps](https://github.com/jellyfin/jellyfin-plugin-trakt/blob/master/README.md#Build). For debugging, see [here](https://github.com/jellyfin/jellyfin-plugin-template/blob/master/README.md).
 
