@@ -139,9 +139,12 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void StartBusyTimer()
     {
-        // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
-        _busyTimer ??= new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
-        _logger.LogDebug("Busy timer started");
+        if (_busyTimer is null)
+        {
+            // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
+            _busyTimer = new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+            _logger.LogDebug("Busy timer started");
+        }
     }
 
     protected virtual void Dispose(bool disposing)
