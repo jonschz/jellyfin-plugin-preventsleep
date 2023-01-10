@@ -68,7 +68,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     public Task RunAsync()
     {
-        _logger.LogInformation("Plugin: entry point");
+        // _logger.LogInformation("Plugin: entry point");
 
         _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
         _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
@@ -79,7 +79,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
-        _logger.LogInformation("Plugin: Playback progress");
+        // _logger.LogInformation("Plugin: Playback progress");
         /*
         Must check the timer here because PlaybackStart is not necessarily triggered for every stream.
         Example: Server is rebooted while a stream is running and the stream reconnects.
@@ -90,12 +90,12 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
     {
-        _logger.LogInformation("Plugin: Playback stop");
+        // _logger.LogInformation("Plugin: Playback stop");
     }
 
     private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
     {
-        _logger.LogInformation("Plugin: Playback start");
+        // _logger.LogInformation("Plugin: Playback start");
         StartBusyTimer();
     }
 
@@ -108,16 +108,17 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
         if (_isBusy != newIsBusy)
         {
-            _logger.LogInformation("New busy state: {State}", newIsBusy);
             _isBusy = newIsBusy;
+            _logger.LogDebug("New busy state: {State}", _isBusy);
         }
 
         if (_isBusy)
         {
-            // Repeat regular calls to SetThreadExecutionState.
-            // We can't use ES_CONTINUOUS because the calls may be made from separate multiprocessing instances,
-            // so there is no guarantee that the flag will be cleared in the correct process.
+            /* Repeat regular calls to SetThreadExecutionState.
+            We can't use ES_CONTINUOUS because the calls may be made from separate multiprocessing instances,
+            so there is no guarantee that the flag will be cleared in the correct process. */
             uint oldState = SetThreadExecutionState(EXECUTION_STATE.ES_SYSTEM_REQUIRED);
+            _logger.LogDebug("Calling SetThreadExecutionState");
             if (oldState == 0)
             {
                 _logger.LogError("Call to SetThreadExecutionState failed");
@@ -125,7 +126,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
         else
         {
-            // TODO implement stopping the timer
+            // TODO test stopping the timer
             // DisposeBusyTimer();
         }
     }
@@ -140,6 +141,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     {
         // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
         _busyTimer ??= new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
+        _logger.LogDebug("Busy timer started");
     }
 
     protected virtual void Dispose(bool disposing)
