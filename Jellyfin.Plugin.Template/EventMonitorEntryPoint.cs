@@ -14,68 +14,67 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
-namespace Jellyfin.Plugin.Template
+using System;
+using System.Threading.Tasks;
+// using MediaBrowser.Controller.Configuration;
+using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Plugins;
+using MediaBrowser.Controller.Session;
+// using MediaBrowser.Model.IO;
+using Microsoft.Extensions.Logging;
+
+namespace Jellyfin.Plugin.PreventSleep;
+
+public class EventMonitorEntryPoint : IServerEntryPoint
 {
-    using System;
-    using System.Threading.Tasks;
-    // using MediaBrowser.Controller.Configuration;
-    using MediaBrowser.Controller.Library;
-    using MediaBrowser.Controller.Plugins;
-    using MediaBrowser.Controller.Session;
-    // using MediaBrowser.Model.IO;
-    using Microsoft.Extensions.Logging;
+    private readonly ISessionManager _sessionManager;
+    // these work when reenabled, but are not needed
+    // private readonly IServerConfigurationManager _config;
+    private readonly ILogger<EventMonitorEntryPoint> _logger;
+    // private readonly ILoggerFactory _loggerFactory;
+    // private readonly IFileSystem _fileSystem;
 
-    public class EventMonitorEntryPoint : IServerEntryPoint
+    public EventMonitorEntryPoint(
+        ISessionManager sessionManager,
+        // IServerConfigurationManager config,
+        ILoggerFactory loggerFactory)
+        // , IFileSystem fileSystem)
     {
-        private readonly ISessionManager _sessionManager;
-        // these work when reenabled, but are not needed
-        // private readonly IServerConfigurationManager _config;
-        private readonly ILogger<EventMonitorEntryPoint> _logger;
-        // private readonly ILoggerFactory _loggerFactory;
-        // private readonly IFileSystem _fileSystem;
+        // _loggerFactory = loggerFactory;
+        _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
+        _sessionManager = sessionManager;
+        // _config = config;
+        // _fileSystem = fileSystem;
+    }
 
-        public EventMonitorEntryPoint(
-            ISessionManager sessionManager,
-            // IServerConfigurationManager config,
-            ILoggerFactory loggerFactory)
-            // , IFileSystem fileSystem)
-        {
-            // _loggerFactory = loggerFactory;
-            _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
-            _sessionManager = sessionManager;
-            // _config = config;
-            // _fileSystem = fileSystem;
-        }
+    public void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
-        public void Dispose()
-        {
-            GC.SuppressFinalize(this);
-        }
+    public Task RunAsync()
+    {
+        _logger.LogInformation("Plugin: entry point");
 
-        public Task RunAsync()
-        {
-            _logger.LogInformation("Plugin: entry point");
+        _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
+        _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
+        _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
 
-            _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
-            _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
-            _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
+        return Task.CompletedTask;
+    }
 
-            return Task.CompletedTask;
-        }
+    private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
+    {
+        _logger.LogInformation("Plugin: Playback progress");
+    }
 
-        private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
-        {
-            _logger.LogInformation("Plugin: Playback progress");
-        }
+    private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
+    {
+        _logger.LogInformation("Plugin: Playback stop");
+    }
 
-        private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
-        {
-            _logger.LogInformation("Plugin: Playback stop");
-        }
-
-        private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
-        {
-            _logger.LogInformation("Plugin: Playback start");
-        }
+    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
+    {
+        _logger.LogInformation("Plugin: Playback start");
     }
 }
