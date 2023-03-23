@@ -16,8 +16,6 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 
 using System;
 using System.Linq;
-using System.Runtime.InteropServices;
-using System.Threading;
 using System.Threading.Tasks;
 // using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
@@ -25,19 +23,9 @@ using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
 // using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
+using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
 namespace Jellyfin.Plugin.PreventSleep;
-
-// based on https://stackoverflow.com/a/60512156
-[Flags]
-public enum EXECUTION_STATE : uint
-{
-    ES_AWAYMODE_REQUIRED = 0x00000040,
-    ES_CONTINUOUS = 0x80000000,
-    ES_DISPLAY_REQUIRED = 0x00000002,
-    ES_SYSTEM_REQUIRED = 0x00000001
-    // ES_USER_PRESENT = 0x00000004
-}
 
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
@@ -47,9 +35,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     // private readonly ILoggerFactory _loggerFactory;
     // private readonly IFileSystem _fileSystem;
-
-    private Timer? _busyTimer;
-    private bool _isBusy;
+    private readonly SafePowerRequestObject _powerRequest;
+    private bool _blockingSleep;
 
     private bool _disposed;
 
@@ -64,6 +51,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _sessionManager = sessionManager;
         // _config = config;
         // _fileSystem = fileSystem;
+        using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files (blocked by the PreventSleep plugin)");
+        _powerRequest = PowerCreateRequest(reasonContext);
     }
 
     public Task RunAsync()
@@ -85,66 +74,43 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         Example: Server is rebooted while a stream is running and the stream reconnects.
         Then the new instance of the server never triggers a PlaybackStart event.
         */
-        StartBusyTimer();
+        BlockSleep();
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
     {
         // _logger.LogInformation("Plugin: Playback stop");
+        if (!_sessionManager.Sessions.Any(i => i.NowPlayingItem is not null))
+        {
+            UnblockSleep();
+        }
     }
 
     private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
     {
         // _logger.LogInformation("Plugin: Playback start");
-        StartBusyTimer();
+        BlockSleep();
     }
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
-    private static extern uint SetThreadExecutionState(EXECUTION_STATE esFlags);
-
-    private void UpdateBusyState(object? state)
+    private void BlockSleep()
     {
-        var newIsBusy = _sessionManager.Sessions.Any(i => i.NowPlayingItem is not null);
-
-        if (_isBusy != newIsBusy)
+        if (_blockingSleep)
         {
-            _isBusy = newIsBusy;
-            _logger.LogDebug("New busy state: {State}", _isBusy);
+            return;
         }
 
-        if (_isBusy)
-        {
-            /* Repeat regular calls to SetThreadExecutionState.
-            We can't use ES_CONTINUOUS because the calls may be made from separate multiprocessing instances,
-            so there is no guarantee that the flag will be cleared in the correct process. */
-            uint oldState = SetThreadExecutionState(EXECUTION_STATE.ES_SYSTEM_REQUIRED);
-            _logger.LogDebug("Calling SetThreadExecutionState");
-            if (oldState == 0)
-            {
-                _logger.LogError("Call to SetThreadExecutionState failed");
-            }
-        }
-        else
-        {
-            // TODO test stopping the timer
-            // DisposeBusyTimer();
-        }
+        _blockingSleep = PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
     }
 
-    private void DisposeBusyTimer()
+    private void UnblockSleep()
     {
-        _busyTimer?.Dispose();
-        _busyTimer = null;
-    }
-
-    private void StartBusyTimer()
-    {
-        if (_busyTimer is null)
+        if (!_blockingSleep)
         {
-            // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
-            _busyTimer = new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
-            _logger.LogDebug("Busy timer started");
+            return;
         }
+
+        PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+        _blockingSleep = false;
     }
 
     protected virtual void Dispose(bool disposing)
@@ -156,7 +122,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
         if (disposing)
         {
-            DisposeBusyTimer();
+            UnblockSleep();
+            _powerRequest.Dispose();
         }
 
         _disposed = true;
