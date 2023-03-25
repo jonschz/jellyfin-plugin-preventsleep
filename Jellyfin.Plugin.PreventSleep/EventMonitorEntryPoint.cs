@@ -15,13 +15,13 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Linq;
+using System.Collections.Specialized;
+using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
-// using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
-// using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
 using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
@@ -29,88 +29,168 @@ namespace Jellyfin.Plugin.PreventSleep;
 
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
+    private const int DelayedMinutes = 15;
     private readonly ISessionManager _sessionManager;
-    // these work when reenabled, but are not needed
-    // private readonly IServerConfigurationManager _config;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
-    // private readonly ILoggerFactory _loggerFactory;
-    // private readonly IFileSystem _fileSystem;
-    private readonly SafePowerRequestObject _powerRequest;
-    private bool _blockingSleep;
-
+    private readonly object _powerRequestLock;
+    private readonly HybridDictionary _removedDevices;
+    private SafePowerRequestObject? _powerRequest;
+    private Timer? _delayedUnblockTimer;
+    private int _blockingSleepBacking;
     private bool _disposed;
+
+    private bool BlockingSleep
+    {
+        get => Interlocked.Add(ref _blockingSleepBacking, 0) == 1;
+        set => Interlocked.Exchange(ref _blockingSleepBacking, value ? 1 : 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+#if DEBUG
+#pragma warning disable CA2254
+    private void __FUNCTION__([CallerMemberName] string memberName = "") => _logger.LogInformation(memberName);
+#pragma warning restore CA2254
+#else
+    private static void __FUNCTION__() {}
+#endif
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
-        // IServerConfigurationManager config,
         ILoggerFactory loggerFactory)
-        // , IFileSystem fileSystem)
     {
-        // _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
         _sessionManager = sessionManager;
-        // _config = config;
-        // _fileSystem = fileSystem;
-        using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files (blocked by the PreventSleep plugin)");
+        _powerRequestLock = new object();
+        _removedDevices = new HybridDictionary(3);
+        using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
         _powerRequest = PowerCreateRequest(reasonContext);
     }
 
     public Task RunAsync()
     {
-        // _logger.LogInformation("Plugin: entry point");
+        __FUNCTION__();
 
         _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
-        _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
         _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
+        _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
 
         return Task.CompletedTask;
     }
 
+    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
+    {
+        __FUNCTION__();
+
+        if (e.MediaInfo is null)
+        {
+            return;
+        }
+
+        if (e.Users.Count == 0)
+        {
+            return;
+        }
+
+        if (e.Item is not null && e.Item.IsThemeMedia)
+        {
+            return;
+        }
+
+        string deviceId = e.DeviceId;
+        if (!_removedDevices.Contains(deviceId))
+        {
+            return;
+        }
+
+        _removedDevices.Remove(deviceId);
+#if DEBUG
+        _logger.LogInformation("Removed {DeviceId} from removed devices list", deviceId);
+#endif
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
-        // _logger.LogInformation("Plugin: Playback progress");
-        /*
-        Must check the timer here because PlaybackStart is not necessarily triggered for every stream.
-        Example: Server is rebooted while a stream is running and the stream reconnects.
-        Then the new instance of the server never triggers a PlaybackStart event.
-        */
-        BlockSleep();
+#if DEBUG
+        __FUNCTION__();
+#endif
+
+        if (_removedDevices.Contains(e.DeviceId))
+        {
+#if DEBUG
+            _logger.LogInformation("PlaybackProgress erroneously called for stopped device: {DeviceName}", e.DeviceName);
+#endif
+            return;
+        }
+
+        if ((DateTime.UtcNow - e.Session.LastPlaybackCheckIn).TotalSeconds > 30)
+        {
+#if DEBUG
+            _logger.LogInformation("LastPlaybackCheckIn of {DeviceName} > 30 seconds, not increasing unblock timer's delay", e.DeviceName);
+#endif
+            return;
+        }
+
+        if (!BlockingSleep)
+        {
+#if DEBUG
+            _logger.LogInformation("Attempting to block sleep");
+#endif
+
+            lock (_powerRequestLock)
+            {
+                if (_powerRequest is not null)
+                {
+                    BlockingSleep = PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                    _logger.LogInformation("Called PowerSetRequest: *sleep blocked*");
+                }
+            }
+        }
+
+        const int Delay = DelayedMinutes * 60000;
+        if (_delayedUnblockTimer is not null && _delayedUnblockTimer.Change(Delay, Timeout.Infinite))
+        {
+            return;
+        }
+
+        _delayedUnblockTimer?.Dispose();
+        _delayedUnblockTimer = new Timer(UnblockSleep, null, Delay, Timeout.Infinite);
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
     {
-        // _logger.LogInformation("Plugin: Playback stop");
-        if (!_sessionManager.Sessions.Any(i => i.NowPlayingItem is not null))
+        __FUNCTION__();
+
+        string deviceId = e.DeviceId;
+        if (!_removedDevices.Contains(deviceId))
         {
-            UnblockSleep();
+            _removedDevices.Add(deviceId, null);
+#if DEBUG
+            _logger.LogInformation("Added {DeviceId} to removed devices list", deviceId);
+#endif
         }
     }
 
-    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
+    private void UnblockSleep(object? _)
     {
-        // _logger.LogInformation("Plugin: Playback start");
-        BlockSleep();
-    }
+        __FUNCTION__();
 
-    private void BlockSleep()
-    {
-        if (_blockingSleep)
-        {
-            return;
-        }
-
-        _blockingSleep = PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
-    }
-
-    private void UnblockSleep()
-    {
-        if (!_blockingSleep)
+        if (!BlockingSleep)
         {
             return;
         }
 
-        PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
-        _blockingSleep = false;
+        lock (_powerRequestLock)
+        {
+            if (_powerRequest is null)
+            {
+                return;
+            }
+
+            _logger.LogInformation("Calling PowerClearRequest: unblocking sleep");
+            PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+            BlockingSleep = false;
+        }
     }
 
     protected virtual void Dispose(bool disposing)
@@ -122,8 +202,20 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
         if (disposing)
         {
-            UnblockSleep();
-            _powerRequest.Dispose();
+            _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
+            _sessionManager.PlaybackStart -= SessionManager_PlaybackStart;
+            _sessionManager.PlaybackStopped -= SessionManager_PlaybackStop;
+
+            _delayedUnblockTimer?.Dispose();
+            _delayedUnblockTimer = null;
+
+            lock (_powerRequestLock)
+            {
+                _powerRequest?.Dispose();
+                _powerRequest = null;
+            }
+
+            _removedDevices.Clear();
         }
 
         _disposed = true;
