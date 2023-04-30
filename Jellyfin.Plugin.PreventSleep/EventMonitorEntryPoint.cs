@@ -15,135 +15,193 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Linq;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-// using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
-// using MediaBrowser.Model.IO;
 using Microsoft.Extensions.Logging;
+using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
-// based on https://stackoverflow.com/a/60512156
-[Flags]
-public enum EXECUTION_STATE : uint
-{
-    ES_AWAYMODE_REQUIRED = 0x00000040,
-    ES_CONTINUOUS = 0x80000000,
-    ES_DISPLAY_REQUIRED = 0x00000002,
-    ES_SYSTEM_REQUIRED = 0x00000001
-    // ES_USER_PRESENT = 0x00000004
-}
-
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
+    private const int DelayedMinutes = 15;
     private readonly ISessionManager _sessionManager;
-    // these work when reenabled, but are not needed
-    // private readonly IServerConfigurationManager _config;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
-    // private readonly ILoggerFactory _loggerFactory;
-    // private readonly IFileSystem _fileSystem;
-
-    private Timer? _busyTimer;
-    private bool _isBusy;
-
+    private readonly object _powerRequestLock;
+    private readonly HybridDictionary _removedDevices;
+    private SafePowerRequestObject? _powerRequest;
+    private Timer? _delayedUnblockTimer;
+    private int _blockingSleepBacking;
     private bool _disposed;
+
+    private bool BlockingSleep
+    {
+        get => Interlocked.Add(ref _blockingSleepBacking, 0) == 1;
+        set => Interlocked.Exchange(ref _blockingSleepBacking, value ? 1 : 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+#if DEBUG
+#pragma warning disable CA2254
+    private void __FUNCTION__([CallerMemberName] string memberName = "") => _logger.LogInformation(memberName);
+#pragma warning restore CA2254
+#else
+    private static void __FUNCTION__() {}
+#endif
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
-        // IServerConfigurationManager config,
         ILoggerFactory loggerFactory)
-        // , IFileSystem fileSystem)
     {
-        // _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
         _sessionManager = sessionManager;
-        // _config = config;
-        // _fileSystem = fileSystem;
+        _powerRequestLock = new object();
+        _removedDevices = new HybridDictionary(3);
+        using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
+        _powerRequest = PowerCreateRequest(reasonContext);
     }
 
     public Task RunAsync()
     {
-        // _logger.LogInformation("Plugin: entry point");
+        __FUNCTION__();
 
+        _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
         _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
         _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
-        _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
 
         return Task.CompletedTask;
     }
 
+    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
+    {
+        __FUNCTION__();
+
+        if (e.MediaInfo is null)
+        {
+            return;
+        }
+
+        if (e.Users.Count == 0)
+        {
+            return;
+        }
+
+        if (e.Item is not null && e.Item.IsThemeMedia)
+        {
+            return;
+        }
+
+        var deviceId = e.DeviceId;
+        if (!_removedDevices.Contains(deviceId))
+        {
+            return;
+        }
+
+        _removedDevices.Remove(deviceId);
+#if DEBUG
+        _logger.LogInformation("Removed {DeviceId} from list of removed devices", deviceId);
+#endif
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
-        // _logger.LogInformation("Plugin: Playback progress");
-        /*
-        Must check the timer here because PlaybackStart is not necessarily triggered for every stream.
-        Example: Server is rebooted while a stream is running and the stream reconnects.
-        Then the new instance of the server never triggers a PlaybackStart event.
-        */
-        StartBusyTimer();
+#if DEBUG
+        __FUNCTION__();
+#endif
+
+        if (_removedDevices.Contains(e.DeviceId))
+        {
+#if DEBUG
+            _logger.LogInformation("PlaybackProgress erroneously called for stopped device {DeviceName}", e.DeviceName);
+#endif
+            return;
+        }
+
+        if ((DateTime.UtcNow - e.Session.LastPlaybackCheckIn).TotalSeconds > 30)
+        {
+#if DEBUG
+            _logger.LogInformation("LastPlaybackCheckIn of {DeviceName} > 30 seconds, not increasing unblock timer's delay", e.DeviceName);
+#endif
+            return;
+        }
+
+        if (!BlockingSleep)
+        {
+#if DEBUG
+            _logger.LogInformation("Attempting to block sleep");
+#endif
+            lock (_powerRequestLock)
+            {
+                if (_powerRequest is null)
+                {
+                    return;
+                }
+
+                if (!(BlockingSleep = PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired)))
+                {
+                    var errno = Marshal.GetLastWin32Error();
+                    var formattedErrMsg = new Win32Exception(errno).Message;
+                    _logger.LogWarning("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", formattedErrMsg, errno);
+                    return;
+                }
+
+                _logger.LogInformation("PowerSetRequest succeeded: sleep blocked");
+            }
+        }
+
+        const int Delay = DelayedMinutes * 60000;
+        if (_delayedUnblockTimer is not null && _delayedUnblockTimer.Change(Delay, Timeout.Infinite))
+        {
+            return;
+        }
+
+        _delayedUnblockTimer?.Dispose();
+        _delayedUnblockTimer = new Timer(UnblockSleep, null, Delay, Timeout.Infinite);
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
     {
-        // _logger.LogInformation("Plugin: Playback stop");
-    }
+        __FUNCTION__();
 
-    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
-    {
-        // _logger.LogInformation("Plugin: Playback start");
-        StartBusyTimer();
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
-    private static extern uint SetThreadExecutionState(EXECUTION_STATE esFlags);
-
-    private void UpdateBusyState(object? state)
-    {
-        var newIsBusy = _sessionManager.Sessions.Any(i => i.NowPlayingItem is not null);
-
-        if (_isBusy != newIsBusy)
+        var deviceId = e.DeviceId;
+        if (_removedDevices.Contains(deviceId))
         {
-            _isBusy = newIsBusy;
-            _logger.LogDebug("New busy state: {State}", _isBusy);
+            return;
         }
 
-        if (_isBusy)
+        _removedDevices.Add(deviceId, null);
+#if DEBUG
+        _logger.LogInformation("Added {DeviceId} to list of removed devices", deviceId);
+#endif
+    }
+
+    private void UnblockSleep(object? _)
+    {
+        __FUNCTION__();
+
+        if (!BlockingSleep)
         {
-            /* Repeat regular calls to SetThreadExecutionState.
-            We can't use ES_CONTINUOUS because the calls may be made from separate multiprocessing instances,
-            so there is no guarantee that the flag will be cleared in the correct process. */
-            uint oldState = SetThreadExecutionState(EXECUTION_STATE.ES_SYSTEM_REQUIRED);
-            _logger.LogDebug("Calling SetThreadExecutionState");
-            if (oldState == 0)
+            return;
+        }
+
+        lock (_powerRequestLock)
+        {
+            if (_powerRequest is null)
             {
-                _logger.LogError("Call to SetThreadExecutionState failed");
+                return;
             }
-        }
-        else
-        {
-            // TODO test stopping the timer
-            // DisposeBusyTimer();
-        }
-    }
 
-    private void DisposeBusyTimer()
-    {
-        _busyTimer?.Dispose();
-        _busyTimer = null;
-    }
-
-    private void StartBusyTimer()
-    {
-        if (_busyTimer is null)
-        {
-            // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
-            _busyTimer = new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
-            _logger.LogDebug("Busy timer started");
+            _logger.LogInformation("Calling PowerClearRequest: unblocking sleep");
+            PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+            BlockingSleep = false; // ignore errors
         }
     }
 
@@ -156,7 +214,20 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
         if (disposing)
         {
-            DisposeBusyTimer();
+            _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
+            _sessionManager.PlaybackStart -= SessionManager_PlaybackStart;
+            _sessionManager.PlaybackStopped -= SessionManager_PlaybackStop;
+
+            _delayedUnblockTimer?.Dispose();
+            _delayedUnblockTimer = null;
+
+            lock (_powerRequestLock)
+            {
+                _powerRequest?.Dispose();
+                _powerRequest = null;
+            }
+
+            _removedDevices.Clear();
         }
 
         _disposed = true;
