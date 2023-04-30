@@ -1,4 +1,4 @@
-# Prevent Sleep Plugin for Jellyfin (WIP)
+# Prevent Sleep Plugin for Jellyfin
 
 ## About
 
@@ -14,7 +14,7 @@ To build this plugin, follow e.g. [these steps](https://github.com/jellyfin/jell
 
 ## Known issues
 - As of now, only Windows is supported for the OS of the server.
-- This plugin may not work if the server is capable of connected standby, see https://superuser.com/a/1287544.
+- This plugin might not work correctly if the server is capable of connected standby, see https://superuser.com/a/1287544. Testing would be greatly appreciated.
 
 Please don't hesistate to report issues if you find any.
 
