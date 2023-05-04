@@ -24,6 +24,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
+using MediaBrowser.Model.Plugins;
 using Microsoft.Extensions.Logging;
 using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
@@ -31,13 +32,13 @@ namespace Jellyfin.Plugin.PreventSleep;
 
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
-    private const int DelayedMinutes = 15;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     private readonly object _powerRequestLock;
     private readonly HybridDictionary _removedDevices;
     private SafePowerRequestObject? _powerRequest;
     private Timer _delayedUnblockTimer;
+    private int _unblockSleepDelay;
     private int _blockingSleepBacking;
     private bool _disposed;
 
@@ -65,7 +66,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _powerRequestLock = new object();
         _removedDevices = new HybridDictionary(5);
         _delayedUnblockTimer = new Timer(UnblockSleep, null, Timeout.Infinite, Timeout.Infinite);
-        using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
+        using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files / waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)");
         _powerRequest = PowerCreateRequest(reasonContext);
     }
 
@@ -73,9 +74,11 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     {
         __FUNCTION__();
 
+        ApplySettingsFromConfig();
         _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
         _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
         _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
+        Plugin.Instance!.ConfigurationChanged += Plugin_ConfigurationChanged;
 
         return Task.CompletedTask;
     }
@@ -158,12 +161,13 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             }
         }
 
-        const int Delay = DelayedMinutes * 60000;
-        if (!_delayedUnblockTimer.Change(Delay, Timeout.Infinite))
+        if (_delayedUnblockTimer.Change(_unblockSleepDelay, Timeout.Infinite))
         {
-            _delayedUnblockTimer.Dispose();
-            _delayedUnblockTimer = new Timer(UnblockSleep, null, Delay, Timeout.Infinite);
+            return;
         }
+
+        _delayedUnblockTimer.Dispose();
+        _delayedUnblockTimer = new Timer(UnblockSleep, null, _unblockSleepDelay, Timeout.Infinite);
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
@@ -180,6 +184,16 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 #if DEBUG
         _logger.LogInformation("Added {DeviceId} to list of removed devices", deviceId);
 #endif
+    }
+
+    private void Plugin_ConfigurationChanged(object? sender, BasePluginConfiguration e)
+    {
+        ApplySettingsFromConfig();
+    }
+
+    private void ApplySettingsFromConfig()
+    {
+        _unblockSleepDelay = Math.Clamp(Plugin.Instance!.Configuration.UnblockSleepDelay, 1000, int.MaxValue);
     }
 
     private void UnblockSleep(object? _)
@@ -214,6 +228,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         if (disposing)
         {
             _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
+            Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
             _sessionManager.PlaybackStart -= SessionManager_PlaybackStart;
             _sessionManager.PlaybackStopped -= SessionManager_PlaybackStop;
 
