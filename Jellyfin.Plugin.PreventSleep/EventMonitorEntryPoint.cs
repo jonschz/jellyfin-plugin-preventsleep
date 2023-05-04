@@ -37,7 +37,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private readonly object _powerRequestLock;
     private readonly HybridDictionary _removedDevices;
     private SafePowerRequestObject? _powerRequest;
-    private Timer? _delayedUnblockTimer;
+    private Timer _delayedUnblockTimer;
     private int _blockingSleepBacking;
     private bool _disposed;
 
@@ -63,7 +63,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
         _sessionManager = sessionManager;
         _powerRequestLock = new object();
-        _removedDevices = new HybridDictionary(3);
+        _removedDevices = new HybridDictionary(5);
+        _delayedUnblockTimer = new Timer(UnblockSleep, null, Timeout.Infinite, Timeout.Infinite);
         using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
         _powerRequest = PowerCreateRequest(reasonContext);
     }
@@ -158,13 +159,11 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
 
         const int Delay = DelayedMinutes * 60000;
-        if (_delayedUnblockTimer is not null && _delayedUnblockTimer.Change(Delay, Timeout.Infinite))
+        if (!_delayedUnblockTimer.Change(Delay, Timeout.Infinite))
         {
-            return;
+            _delayedUnblockTimer.Dispose();
+            _delayedUnblockTimer = new Timer(UnblockSleep, null, Delay, Timeout.Infinite);
         }
-
-        _delayedUnblockTimer?.Dispose();
-        _delayedUnblockTimer = new Timer(UnblockSleep, null, Delay, Timeout.Infinite);
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
@@ -218,8 +217,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             _sessionManager.PlaybackStart -= SessionManager_PlaybackStart;
             _sessionManager.PlaybackStopped -= SessionManager_PlaybackStop;
 
-            _delayedUnblockTimer?.Dispose();
-            _delayedUnblockTimer = null;
+            _delayedUnblockTimer.Dispose();
 
             lock (_powerRequestLock)
             {
