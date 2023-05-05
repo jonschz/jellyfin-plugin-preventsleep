@@ -31,15 +31,17 @@ namespace Jellyfin.Plugin.PreventSleep;
 
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
+    private const int TimerInterval = 10000;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     private readonly object _powerRequestLock;
     private readonly HybridDictionary _removedDevices;
+    private readonly Timer _unblockTimer;
     private SafePowerRequestObject? _powerRequest;
-    private Timer _delayedUnblockTimer;
-    private int _unblockSleepDelay;
+    private TimeSpan _unblockSleepDelay;
     private bool _blockingSleep;
     private bool _disposed;
+    private DateTime _lastCheckin;
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
@@ -49,7 +51,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _sessionManager = sessionManager;
         _powerRequestLock = new object();
         _removedDevices = new HybridDictionary(5);
-        _delayedUnblockTimer = new Timer(UnblockSleep, null, Timeout.Infinite, Timeout.Infinite);
+        _lastCheckin = DateTime.MinValue;
+        _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
         try
         {
             using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)");
@@ -94,47 +97,14 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             return;
         }
 
-        if ((DateTime.UtcNow - e.Session.LastPlaybackCheckIn).TotalSeconds > 30)
+        // This most likely does not require locks / synchronisation; even if some other thread changes _lastCheckin
+        // in between the read and the write below, not much can happen
+        if (e.Session.LastPlaybackCheckIn > _lastCheckin)
         {
-            _logger.LogDebug("LastPlaybackCheckIn of {DeviceName} > 30 seconds, not increasing unblock timer's delay", e.DeviceName);
-            return;
+            _lastCheckin = e.Session.LastPlaybackCheckIn;
         }
 
-        if (!_blockingSleep)
-        {
-            lock (_powerRequestLock)
-            {
-                if (_powerRequest is null)
-                {
-                    return;
-                }
-
-                try
-                {
-                    // TODO if PowerSetRequest fails, this will be re-attempted multiple times a second.
-                    // Is there any chance that PowerSetRequest will fail on the first attempt but succeed soon after?
-                    // If not, I would move "_blockingSleep = True" outside of this try-except block. Then, only a (failing)
-                    // PowerClearRequest will be called later.
-                    _logger.LogDebug("Attempting to block sleep");
-                    SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
-                    _blockingSleep = true;
-                    _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
-                }
-                catch (Win32Exception err)
-                {
-                    _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
-                    return;
-                }
-            }
-        }
-
-        if (_delayedUnblockTimer.Change(_unblockSleepDelay, Timeout.Infinite))
-        {
-            return;
-        }
-
-        _delayedUnblockTimer.Dispose();
-        _delayedUnblockTimer = new Timer(UnblockSleep, null, _unblockSleepDelay, Timeout.Infinite);
+        BlockSleep();
     }
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
@@ -156,21 +126,67 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void ApplySettingsFromConfig()
     {
-        _unblockSleepDelay = Math.Clamp(Plugin.Instance!.Configuration.UnblockSleepDelay * 60000, 60000, int.MaxValue);
+        _unblockSleepDelay = TimeSpan.FromMinutes(Math.Clamp(Plugin.Instance!.Configuration.UnblockSleepDelay, 1, int.MaxValue));
     }
 
-    #pragma warning disable SA1313 // Disable a spurious warning, see https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2599
-    private void UnblockSleep(object? _)
-    #pragma warning restore SA1313
+    private void BlockSleep()
     {
-        if (!_blockingSleep)
+        if (_blockingSleep)
         {
             return;
         }
 
         lock (_powerRequestLock)
         {
-            if (_powerRequest is null)
+            // check _blockingSleep again for thread safety
+            if (_powerRequest is null || _blockingSleep)
+            {
+                return;
+            }
+
+            try
+            {
+                // TODO if PowerSetRequest fails, this will be re-attempted multiple times a second.
+                // Is there any chance that PowerSetRequest will fail on the first attempt but succeed soon after?
+                // If not, I would move "_blockingSleep = True" outside of this try-except block. Then, only a (failing)
+                // PowerClearRequest will be called later.
+                _logger.LogDebug("Attempting to block sleep");
+                SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                _blockingSleep = true;
+                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
+            }
+            catch (Win32Exception err)
+            {
+                _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
+                return;
+            }
+        }
+    }
+
+    // Periodically check if the PowerRequest can be cleared.
+    // This is more efficient than modifying a one-shot timer on every PlaybackProgress
+    // which happens multiple times per second.
+    #pragma warning disable SA1313 // Disable a spurious warning, see https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2599
+    private void UnblockSleepTimerCallback(object? _)
+    #pragma warning restore SA1313
+    {
+        _logger.LogDebug("Timer to unblock sleep");
+        if (!_blockingSleep)
+        {
+            return;
+        }
+
+        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
+        if (timeSinceCheckin < _unblockSleepDelay)
+        {
+            _logger.LogDebug("Time since checkin: {TimeElapsed}", timeSinceCheckin);
+            return;
+        }
+
+        lock (_powerRequestLock)
+        {
+            // check _blockingSleep again for thread safety
+            if (_powerRequest is null || !_blockingSleep)
             {
                 return;
             }
@@ -179,6 +195,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             try
             {
                 SafePowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
             }
             catch (Win32Exception e)
             {
@@ -204,7 +221,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             _sessionManager.PlaybackStopped -= SessionManager_PlaybackStop;
             Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
 
-            _delayedUnblockTimer.Dispose();
+            _unblockTimer.Dispose();
 
             lock (_powerRequestLock)
             {
