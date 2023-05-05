@@ -1,5 +1,5 @@
 /*
-Copyright(C) 2018
+Copyright(C) 2018, 2023
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -18,7 +18,6 @@ using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
@@ -38,7 +37,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private readonly HybridDictionary _removedDevices;
     private SafePowerRequestObject? _powerRequest;
     private Timer? _delayedUnblockTimer;
-    private int _blockingSleepBacking;
+    private bool _blockingSleep;
     private bool _disposed;
 
     public EventMonitorEntryPoint(
@@ -49,14 +48,15 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _sessionManager = sessionManager;
         _powerRequestLock = new object();
         _removedDevices = new HybridDictionary(3);
-        using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
-        _powerRequest = PowerCreateRequest(reasonContext);
-    }
-
-    private bool BlockingSleep
-    {
-        get => Interlocked.Add(ref _blockingSleepBacking, 0) == 1;
-        set => Interlocked.Exchange(ref _blockingSleepBacking, value ? 1 : 0);
+        try
+        {
+            using var reasonContext = new REASON_CONTEXT($"Jellyfin is serving files/waiting {DelayedMinutes} minutes for another request (blocked by Plugin.PreventSleep)");
+            _powerRequest = SafePowerCreateRequest(reasonContext);
+        }
+        catch (Win32Exception e)
+        {
+            _logger.LogError("PowerCreateRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+        }
     }
 
     public Task RunAsync()
@@ -110,9 +110,8 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             return;
         }
 
-        if (!BlockingSleep)
+        if (!_blockingSleep)
         {
-            _logger.LogDebug("Attempting to block sleep");
             lock (_powerRequestLock)
             {
                 if (_powerRequest is null)
@@ -120,15 +119,22 @@ public class EventMonitorEntryPoint : IServerEntryPoint
                     return;
                 }
 
-                if (!(BlockingSleep = PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired)))
+                try
                 {
-                    var errno = Marshal.GetLastWin32Error();
-                    var formattedErrMsg = new Win32Exception(errno).Message;
-                    _logger.LogWarning("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", formattedErrMsg, errno);
+                    // TODO if PowerSetRequest fails, this will be re-attempted multiple times a second.
+                    // Is there any chance that PowerSetRequest will fail on the first attempt but succeed soon after?
+                    // If not, I would move "_blockingSleep = True" outside of this try-except block. Then, only a (failing)
+                    // PowerClearRequest will be called later.
+                    _logger.LogDebug("Attempting to block sleep");
+                    SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                    _blockingSleep = true;
+                    _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
+                }
+                catch (Win32Exception err)
+                {
+                    _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
                     return;
                 }
-
-                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
             }
         }
 
@@ -154,9 +160,11 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _logger.LogDebug("Added {DeviceId} to list of removed devices", deviceId);
     }
 
+    #pragma warning disable SA1313 // Disable a spurious warning, see https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2599
     private void UnblockSleep(object? _)
+    #pragma warning restore SA1313
     {
-        if (!BlockingSleep)
+        if (!_blockingSleep)
         {
             return;
         }
@@ -169,8 +177,17 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             }
 
             _logger.LogDebug("Calling PowerClearRequest: unblocking sleep");
-            PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
-            BlockingSleep = false; // ignore errors
+            try
+            {
+                SafePowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+            }
+            catch (Win32Exception e)
+            {
+                _logger.LogError("PowerClearRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+                return;
+            }
+
+            _blockingSleep = false; // ignore errors
         }
     }
 
