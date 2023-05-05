@@ -41,21 +41,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private int _blockingSleepBacking;
     private bool _disposed;
 
-    private bool BlockingSleep
-    {
-        get => Interlocked.Add(ref _blockingSleepBacking, 0) == 1;
-        set => Interlocked.Exchange(ref _blockingSleepBacking, value ? 1 : 0);
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-#if DEBUG
-#pragma warning disable CA2254
-    private void __FUNCTION__([CallerMemberName] string memberName = "") => _logger.LogInformation(memberName);
-#pragma warning restore CA2254
-#else
-    private static void __FUNCTION__() {}
-#endif
-
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
         ILoggerFactory loggerFactory)
@@ -68,10 +53,14 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _powerRequest = PowerCreateRequest(reasonContext);
     }
 
+    private bool BlockingSleep
+    {
+        get => Interlocked.Add(ref _blockingSleepBacking, 0) == 1;
+        set => Interlocked.Exchange(ref _blockingSleepBacking, value ? 1 : 0);
+    }
+
     public Task RunAsync()
     {
-        __FUNCTION__();
-
         _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
         _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
         _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
@@ -81,8 +70,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
     {
-        __FUNCTION__();
-
         if (e.MediaInfo is null)
         {
             return;
@@ -105,39 +92,27 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
 
         _removedDevices.Remove(deviceId);
-#if DEBUG
-        _logger.LogInformation("Removed {DeviceId} from list of removed devices", deviceId);
-#endif
+        _logger.LogDebug("Removed {DeviceId} from list of removed devices", deviceId);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
-#if DEBUG
-        __FUNCTION__();
-#endif
-
         if (_removedDevices.Contains(e.DeviceId))
         {
-#if DEBUG
-            _logger.LogInformation("PlaybackProgress erroneously called for stopped device {DeviceName}", e.DeviceName);
-#endif
+            _logger.LogDebug("PlaybackProgress erroneously called for stopped device {DeviceName}", e.DeviceName);
             return;
         }
 
         if ((DateTime.UtcNow - e.Session.LastPlaybackCheckIn).TotalSeconds > 30)
         {
-#if DEBUG
-            _logger.LogInformation("LastPlaybackCheckIn of {DeviceName} > 30 seconds, not increasing unblock timer's delay", e.DeviceName);
-#endif
+            _logger.LogDebug("LastPlaybackCheckIn of {DeviceName} > 30 seconds, not increasing unblock timer's delay", e.DeviceName);
             return;
         }
 
         if (!BlockingSleep)
         {
-#if DEBUG
-            _logger.LogInformation("Attempting to block sleep");
-#endif
+            _logger.LogDebug("Attempting to block sleep");
             lock (_powerRequestLock)
             {
                 if (_powerRequest is null)
@@ -153,7 +128,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
                     return;
                 }
 
-                _logger.LogInformation("PowerSetRequest succeeded: sleep blocked");
+                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
             }
         }
 
@@ -169,8 +144,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
     {
-        __FUNCTION__();
-
         var deviceId = e.DeviceId;
         if (_removedDevices.Contains(deviceId))
         {
@@ -178,15 +151,11 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
 
         _removedDevices.Add(deviceId, null);
-#if DEBUG
-        _logger.LogInformation("Added {DeviceId} to list of removed devices", deviceId);
-#endif
+        _logger.LogDebug("Added {DeviceId} to list of removed devices", deviceId);
     }
 
     private void UnblockSleep(object? _)
     {
-        __FUNCTION__();
-
         if (!BlockingSleep)
         {
             return;
@@ -199,7 +168,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
                 return;
             }
 
-            _logger.LogInformation("Calling PowerClearRequest: unblocking sleep");
+            _logger.LogDebug("Calling PowerClearRequest: unblocking sleep");
             PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
             BlockingSleep = false; // ignore errors
         }
