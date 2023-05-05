@@ -19,9 +19,8 @@
     https://github.com/dahall/Vanara/commit/153533f7e07bb78119dee90520ed5af6b5b584ae
 */
 
-#pragma warning disable CA1401 // PInvokesShouldNotBeVisible
-
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -53,18 +52,45 @@ public static class VanaraPInvokeKernel32
 
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool PowerClearRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType);
+    private static extern bool PowerClearRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType);
 
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
-    public static extern SafePowerRequestObject PowerCreateRequest([In] REASON_CONTEXT context);
-
-    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool PowerSetRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType);
+    private static extern SafePowerRequestObject PowerCreateRequest([In] REASON_CONTEXT context);
 
     [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool CloseHandle(IntPtr hObject);
+    private static extern bool PowerSetRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType);
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    public static void SafePowerClearRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType)
+    {
+        if (!PowerClearRequest(powerRequest, requestType))
+        {
+            throw new Win32Exception();
+        }
+    }
+
+    public static SafePowerRequestObject SafePowerCreateRequest(REASON_CONTEXT context)
+    {
+        var handle = PowerCreateRequest(context);
+        if (handle.IsInvalid)
+        {
+            throw new Win32Exception();
+        }
+
+        return handle;
+    }
+
+    public static void SafePowerSetRequest(SafePowerRequestObject powerRequest, POWER_REQUEST_TYPE requestType)
+    {
+        if (!PowerSetRequest(powerRequest, requestType))
+        {
+            throw new Win32Exception();
+        }
+    }
 
     public class SafePowerRequestObject : SafeKernelHandle
     {
