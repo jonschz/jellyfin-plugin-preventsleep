@@ -74,29 +74,15 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
     {
-        if (e.MediaInfo is null)
-        {
-            return;
-        }
-
-        if (e.Users.Count == 0)
-        {
-            return;
-        }
-
-        if (e.Item is not null && e.Item.IsThemeMedia)
-        {
-            return;
-        }
-
         var deviceId = e.DeviceId;
-        if (!_removedDevices.Contains(deviceId))
+        if ((e.MediaInfo is not null) &&
+            (e.Users.Count > 0) &&
+            (e.Item is null || !e.Item.IsThemeMedia) &&
+            _removedDevices.Contains(deviceId))
         {
-            return;
+            _removedDevices.Remove(deviceId);
+            _logger.LogDebug("Removed {DeviceId} from list of removed devices", deviceId);
         }
-
-        _removedDevices.Remove(deviceId);
-        _logger.LogDebug("Removed {DeviceId} from list of removed devices", deviceId);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
