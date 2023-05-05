@@ -17,7 +17,7 @@ public class PluginConfiguration : BasePluginConfiguration
     }
 
     /// <summary>
-    /// The amount of minutes to wait before re-enabling sleep.
+    /// Gets or sets the amount of minutes to wait before re-enabling sleep.
     /// </summary>
     public int UnblockSleepDelay { get; set; }
 }
