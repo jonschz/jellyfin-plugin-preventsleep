@@ -1,5 +1,5 @@
 /*
-Copyright(C) 2018
+Copyright(C) 2018, 2023
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,135 +15,149 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Linq;
-using System.Runtime.InteropServices;
+using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
-// using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
-// using MediaBrowser.Model.IO;
+using MediaBrowser.Model.Plugins;
 using Microsoft.Extensions.Logging;
+using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
-// based on https://stackoverflow.com/a/60512156
-[Flags]
-public enum EXECUTION_STATE : uint
-{
-    ES_AWAYMODE_REQUIRED = 0x00000040,
-    ES_CONTINUOUS = 0x80000000,
-    ES_DISPLAY_REQUIRED = 0x00000002,
-    ES_SYSTEM_REQUIRED = 0x00000001
-    // ES_USER_PRESENT = 0x00000004
-}
-
 public class EventMonitorEntryPoint : IServerEntryPoint
 {
+    private const int TimerInterval = 20000;
     private readonly ISessionManager _sessionManager;
-    // these work when reenabled, but are not needed
-    // private readonly IServerConfigurationManager _config;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
-    // private readonly ILoggerFactory _loggerFactory;
-    // private readonly IFileSystem _fileSystem;
-
-    private Timer? _busyTimer;
-    private bool _isBusy;
-
+    private readonly object _powerRequestLock;
+    // _unblockTimer is not null iff sleep mode is currently blocked
+    private Timer? _unblockTimer;
+    private SafePowerRequestObject? _powerRequest;
+    private TimeSpan _unblockSleepDelay;
     private bool _disposed;
+    private DateTime _lastCheckin;
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
-        // IServerConfigurationManager config,
         ILoggerFactory loggerFactory)
-        // , IFileSystem fileSystem)
     {
-        // _loggerFactory = loggerFactory;
         _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
         _sessionManager = sessionManager;
-        // _config = config;
-        // _fileSystem = fileSystem;
+        _powerRequestLock = new object();
+        _lastCheckin = DateTime.MinValue;
+        try
+        {
+            using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)");
+            _powerRequest = SafePowerCreateRequest(reasonContext);
+        }
+        catch (Win32Exception e)
+        {
+            _logger.LogError("PowerCreateRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+        }
     }
 
     public Task RunAsync()
     {
-        // _logger.LogInformation("Plugin: entry point");
-
-        _sessionManager.PlaybackStart += SessionManager_PlaybackStart;
-        _sessionManager.PlaybackStopped += SessionManager_PlaybackStop;
+        ApplySettingsFromConfig();
         _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
+        Plugin.Instance!.ConfigurationChanged += Plugin_ConfigurationChanged;
 
         return Task.CompletedTask;
     }
 
     private void SessionManager_PlaybackProgress(object? sender, PlaybackProgressEventArgs e)
     {
-        // _logger.LogInformation("Plugin: Playback progress");
-        /*
-        Must check the timer here because PlaybackStart is not necessarily triggered for every stream.
-        Example: Server is rebooted while a stream is running and the stream reconnects.
-        Then the new instance of the server never triggers a PlaybackStart event.
-        */
-        StartBusyTimer();
-    }
-
-    private void SessionManager_PlaybackStop(object? sender, PlaybackStopEventArgs e)
-    {
-        // _logger.LogInformation("Plugin: Playback stop");
-    }
-
-    private void SessionManager_PlaybackStart(object? sender, PlaybackProgressEventArgs e)
-    {
-        // _logger.LogInformation("Plugin: Playback start");
-        StartBusyTimer();
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
-    private static extern uint SetThreadExecutionState(EXECUTION_STATE esFlags);
-
-    private void UpdateBusyState(object? state)
-    {
-        var newIsBusy = _sessionManager.Sessions.Any(i => i.NowPlayingItem is not null);
-
-        if (_isBusy != newIsBusy)
+        // This most likely does not require locks / synchronisation; even if some other thread changes _lastCheckin
+        // in between the read and the write below, not much can happen
+        if (e.Session.LastPlaybackCheckIn > _lastCheckin)
         {
-            _isBusy = newIsBusy;
-            _logger.LogDebug("New busy state: {State}", _isBusy);
+            _lastCheckin = e.Session.LastPlaybackCheckIn;
         }
 
-        if (_isBusy)
+        if (_unblockTimer is null)
         {
-            /* Repeat regular calls to SetThreadExecutionState.
-            We can't use ES_CONTINUOUS because the calls may be made from separate multiprocessing instances,
-            so there is no guarantee that the flag will be cleared in the correct process. */
-            uint oldState = SetThreadExecutionState(EXECUTION_STATE.ES_SYSTEM_REQUIRED);
-            _logger.LogDebug("Calling SetThreadExecutionState");
-            if (oldState == 0)
+            BlockSleep();
+        }
+    }
+
+    private void Plugin_ConfigurationChanged(object? sender, BasePluginConfiguration e)
+    {
+        ApplySettingsFromConfig();
+    }
+
+    private void ApplySettingsFromConfig()
+    {
+        // We add an additional delay of 15 seconds because Session.LastPlaybackCheckIn can lag behind UtcNow
+        // by 10 seconds (and possibly more) even if the stream if healthy.
+        const double AddedDelay = .25;
+        _unblockSleepDelay = TimeSpan.FromMinutes(
+            AddedDelay + Math.Clamp(Plugin.Instance!.Configuration.UnblockSleepDelay, 1, int.MaxValue));
+    }
+
+    private void BlockSleep()
+    {
+        lock (_powerRequestLock)
+        {
+            // check _unblockTimer again for thread safety; we only ever change _unblockTimer
+            // when _powerRequestLock has been acquired
+            if (_powerRequest is null || _unblockTimer is not null)
             {
-                _logger.LogError("Call to SetThreadExecutionState failed");
+                return;
+            }
+
+            try
+            {
+                _logger.LogDebug("Attempting to block sleep");
+                SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
+                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
+            }
+            catch (Win32Exception err)
+            {
+                _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
+                return;
             }
         }
-        else
+    }
+
+    // Periodically check if the PowerRequest can be cleared.
+    // This is more efficient than modifying a one-shot timer on every PlaybackProgress
+    // which happens multiple times per second.
+    #pragma warning disable SA1313 // Disable a spurious warning, see https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2599
+    private void UnblockSleepTimerCallback(object? _)
+    #pragma warning restore SA1313
+    {
+        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
+        _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
+        if (timeSinceCheckin < _unblockSleepDelay)
         {
-            // TODO test stopping the timer
-            // DisposeBusyTimer();
+            return;
         }
-    }
 
-    private void DisposeBusyTimer()
-    {
-        _busyTimer?.Dispose();
-        _busyTimer = null;
-    }
-
-    private void StartBusyTimer()
-    {
-        if (_busyTimer is null)
+        lock (_powerRequestLock)
         {
-            // The minimum time to sleep in Windows is 1 minute, so updating the busy state every 30 seconds is on the safe side
-            _busyTimer = new Timer(UpdateBusyState, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
-            _logger.LogDebug("Busy timer started");
+            if (_powerRequest is null || _unblockTimer is null)
+            {
+                return;
+            }
+
+            _logger.LogDebug("Calling PowerClearRequest: unblocking sleep");
+            try
+            {
+                SafePowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
+                _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
+            }
+            catch (Win32Exception e)
+            {
+                _logger.LogError("PowerClearRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+                return;
+            }
+
+            _unblockTimer.Dispose();
+            _unblockTimer = null;
         }
     }
 
@@ -156,7 +170,16 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
         if (disposing)
         {
-            DisposeBusyTimer();
+            _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
+            Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
+
+            _unblockTimer?.Dispose();
+
+            lock (_powerRequestLock)
+            {
+                _powerRequest?.Dispose();
+                _powerRequest = null;
+            }
         }
 
         _disposed = true;
