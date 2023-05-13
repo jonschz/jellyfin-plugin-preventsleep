@@ -33,6 +33,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     private readonly object _powerRequestLock;
+    private readonly bool _isDebugLogEnabled;
     // _unblockTimer is not null iff sleep mode is currently blocked
     private Timer? _unblockTimer;
     private SafePowerRequestObject? _powerRequest;
@@ -48,6 +49,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         _sessionManager = sessionManager;
         _powerRequestLock = new object();
         _lastCheckin = DateTime.MinValue;
+        _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
         try
         {
             using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)");
@@ -61,6 +63,11 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     public Task RunAsync()
     {
+        if (_powerRequest is null)
+        {
+            return Task.CompletedTask;
+        }
+
         ApplySettingsFromConfig();
         _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
         Plugin.Instance!.ConfigurationChanged += Plugin_ConfigurationChanged;
@@ -110,7 +117,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
             try
             {
-                _logger.LogDebug("Attempting to block sleep");
                 SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
                 _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
@@ -118,7 +124,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             catch (Win32Exception err)
             {
                 _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
-                return;
             }
         }
     }
@@ -126,12 +131,14 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     // Periodically check if the PowerRequest can be cleared.
     // This is more efficient than modifying a one-shot timer on every PlaybackProgress
     // which happens multiple times per second.
-    #pragma warning disable SA1313 // Disable a spurious warning, see https://github.com/DotNetAnalyzers/StyleCopAnalyzers/issues/2599
-    private void UnblockSleepTimerCallback(object? _)
-    #pragma warning restore SA1313
+    private void UnblockSleepTimerCallback(object? state)
     {
         var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
-        _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
+        if (_isDebugLogEnabled)
+        {
+            _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
+        }
+
         if (timeSinceCheckin < _unblockSleepDelay)
         {
             return;
@@ -144,7 +151,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
                 return;
             }
 
-            _logger.LogDebug("Calling PowerClearRequest: unblocking sleep");
             try
             {
                 SafePowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
@@ -174,6 +180,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
             Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
 
             _unblockTimer?.Dispose();
+            _unblockTimer = null;
 
             lock (_powerRequestLock)
             {
