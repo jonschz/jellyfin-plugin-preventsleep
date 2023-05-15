@@ -63,14 +63,12 @@ public class EventMonitorEntryPoint : IServerEntryPoint
 
     public Task RunAsync()
     {
-        if (_powerRequest is null)
+        if (_powerRequest is not null)
         {
-            return Task.CompletedTask;
+            ApplySettingsFromConfig();
+            _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
+            Plugin.Instance!.ConfigurationChanged += Plugin_ConfigurationChanged;
         }
-
-        ApplySettingsFromConfig();
-        _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
-        Plugin.Instance!.ConfigurationChanged += Plugin_ConfigurationChanged;
 
         return Task.CompletedTask;
     }
