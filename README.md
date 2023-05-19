@@ -4,7 +4,7 @@
 
 This plugin for [Jellyfin](https://jellyfin.org/) prevents the server from entering sleep mode whenever there are active streams.
 
-At this time, this plugin is in an early development stage and not part of the Jellyfin project. Use at your own risk.
+At this time, this plugin is not part of the Jellyfin project. Use at your own risk.
 
 ## Installation
 
