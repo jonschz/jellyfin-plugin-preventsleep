@@ -14,6 +14,13 @@
                "${config:jellyfinWebDir}/dist/"
             ],
             "cwd": "${config:jellyfinDir}",
-        }
+            "logging": {"moduleLoad": false},
+            "env": {
+                "JELLYFIN_WEB_DIR": "${config:jellyfinWebDir}/dist",
+                "JELLYFIN_DATA_DIR": "${config:jellyfinDataDir}",
+                "JELLYFIN_CONFIG_DIR": "${config:jellyfinConfigDir}",
+                "JELLYFIN_LOG_DIR": "${config:jellyfinLogDir}"
+            },
+        },
     ]
 }
