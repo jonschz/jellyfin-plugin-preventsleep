@@ -17,6 +17,7 @@
       "args": [
         "publish",
         "${workspaceFolder}/${config:pluginName}.sln",
+        "/property:configuration=Debug",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary"
       ],
@@ -39,17 +40,35 @@
     },
     {
         // Copy the plugin dll to the jellyfin plugin install path
-        // This command copies every .dll from the build directory to the plugin dir
-        // Usually, you probablly only need ${config:pluginName}.dll
-        // But some plugins may bundle extra requirements
+        //
+        // In the past, this command used to copy every .dll from the build directory to the plugin dir.
+        // This causes issues from Jellyfin 10.9 onwards, so we changed the behaviour.
+        // Keep in mind that a plugin might, in theory, want to bundle requirements
         "label": "copy-dll",
         "type": "shell",
         "command": "cp",
         "args": [
-           "./${config:pluginName}/bin/Debug/net6.0/publish/*",
+           "./${config:pluginName}/bin/Debug/net8.0/publish/${config:pluginName}.dll",
            "${config:jellyfinDataDir}/plugins/${config:pluginName}/"
         ]
-
     },
+    {
+        // Build in release mode
+        "label": "release",
+        "command": "dotnet",
+        "type": "shell",
+        "args": [
+          "publish",
+          "${workspaceFolder}/${config:pluginName}.sln",
+          "/property:configuration=Release",
+          "/property:GenerateFullPaths=true",
+          "/consoleloggerparameters:NoSummary"
+        ],
+        "group": "build",
+        "presentation": {
+          "reveal": "silent"
+        },
+        "problemMatcher": "$msCompile"
+      },
   ]
 }

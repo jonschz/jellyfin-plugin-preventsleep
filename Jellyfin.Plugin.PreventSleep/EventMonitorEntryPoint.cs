@@ -19,15 +19,15 @@ using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
-public class EventMonitorEntryPoint : IServerEntryPoint
+public class EventMonitorEntryPoint : IHostedService
 {
     private const int TimerInterval = 20000;
     private readonly ISessionManager _sessionManager;
@@ -38,7 +38,6 @@ public class EventMonitorEntryPoint : IServerEntryPoint
     private Timer? _unblockTimer;
     private SafePowerRequestObject? _powerRequest;
     private TimeSpan _unblockSleepDelay;
-    private bool _disposed;
     private DateTime _lastCheckin;
 
     public EventMonitorEntryPoint(
@@ -61,7 +60,7 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
     }
 
-    public Task RunAsync()
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         if (_powerRequest is not null)
         {
@@ -165,34 +164,20 @@ public class EventMonitorEntryPoint : IServerEntryPoint
         }
     }
 
-    protected virtual void Dispose(bool disposing)
+    public Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_disposed)
+        _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
+        Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
+
+        _unblockTimer?.Dispose();
+        _unblockTimer = null;
+
+        lock (_powerRequestLock)
         {
-            return;
+            _powerRequest?.Dispose();
+            _powerRequest = null;
         }
 
-        if (disposing)
-        {
-            _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
-            Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
-
-            _unblockTimer?.Dispose();
-            _unblockTimer = null;
-
-            lock (_powerRequestLock)
-            {
-                _powerRequest?.Dispose();
-                _powerRequest = null;
-            }
-        }
-
-        _disposed = true;
-    }
-
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
+        return Task.CompletedTask;
     }
 }

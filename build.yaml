@@ -1,13 +1,13 @@
 ---
 name: "Prevent Sleep"
 guid: "d6b0196a-9885-4d87-b25c-562a57ebbe0b"
-version: "1.0.0.0"
-targetAbi: "10.8.0.0"
-framework: "net6.0"
+version: "0.2.0.0"
+targetAbi: "10.9.0.0"
+framework: "net8.0"
 overview: "Prevent the system from entering sleep mode when there are active streams"
 description: >
-  This is a longer description that can span more than one
-  line and include details about your plugin.
+  Prevents the system from entering sleep mode when there are active streams.
+  Only Windows is supported.
 category: "General"
 owner: "jellyfin"
 artifacts:
