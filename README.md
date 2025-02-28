@@ -8,11 +8,15 @@ At this time, this plugin is not part of the Jellyfin project. Use at your own r
 
 ## Installation
 
-Compiled binaries can be downloaded [here](https://github.com/jonschz/jellyfin-plugin-preventsleep/releases). To install the compiled binary, download the `.dll`, go to your plugin folder (see [here](https://jellyfin.org/docs/general/server/plugins/)), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
+Compiled binaries can be downloaded [here](https://github.com/jonschz/jellyfin-plugin-preventsleep/releases). Note that the most recent release only works with Jellyfin 10.9 or newer, and Jellyfin does not [automatically update itself](https://github.com/jellyfin/jellyfin-server-windows/issues/30). If in doubt, [update](https://github.com/jellyfin/jellyfin/releases) your Jellyfin installation first.
 
-To build this plugin, follow e.g. [these steps](https://github.com/jellyfin/jellyfin-plugin-trakt/blob/master/README.md#Build). For debugging, see [here](https://github.com/jellyfin/jellyfin-plugin-template/blob/master/README.md).
+To install the compiled binary, download the `.dll`, go to your plugin folder (see [here](https://jellyfin.org/docs/general/server/plugins/)), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
+
+To build this plugin yourself, follow e.g. [these steps](https://github.com/jellyfin/jellyfin-plugin-trakt/blob/master/README.md#Build). For debugging, see [here](https://github.com/jellyfin/jellyfin-plugin-template/blob/master/README.md).
 
 ## Known issues
+
+
 - As of now, only Windows is supported for the OS of the server.
 - This plugin might not work correctly if the server is capable of connected standby, see https://superuser.com/a/1287544. Testing would be greatly appreciated.
 
