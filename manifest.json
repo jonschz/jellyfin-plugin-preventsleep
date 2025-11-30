@@ -4,7 +4,7 @@
     "name": "Prevent Sleep",
     "description": "Prevent the system from entering sleep mode when there are active streams.",
     "overview": "Prevent system sleep",
-    "owner": "h3llrais3r",
+    "owner": "jonschz",
     "category": "General",
     "versions": [
       {
