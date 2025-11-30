@@ -1,20 +1,20 @@
 [
-    {
-        "guid": "d6b0196a-9885-4d87-b25c-562a57ebbe0b",
-        "name": "Prevent Sleep",
-        "description": "Prevent the system from entering sleep mode when there are active streams.\n",
-        "overview": "Prevent system sleep",
-        "owner": "jonschz",
-        "category": "General",
-        "versions": [
-            {
-                "version": "0.2.0.0",
-                "changelog": "Initial version",
-                "targetAbi": "10.9.0.0",
-                "sourceUrl": "https://github.com/h3llrais3r/jellyfin-plugin-preventsleep/releases/download/0.2.0.0/PreventSleep_0.2.0.0.zip",
-                "checksum": "1e533b3ec4b17d56d0cd8c9080b029b90fe2722bc9851f10318d98b07504ba7f",
-                "timestamp": "2024-05-12T15:34:00"
-            }
-        ]
-    }
+  {
+    "guid": "d6b0196a-9885-4d87-b25c-562a57ebbe0b",
+    "name": "Prevent Sleep",
+    "description": "Prevent the system from entering sleep mode when there are active streams.",
+    "overview": "Prevent system sleep",
+    "owner": "h3llrais3r",
+    "category": "General",
+    "versions": [
+      {
+        "version": "0.2.0.0",
+        "changelog": "Jellyfin 10.9.0",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/h3llrais3r/jellyfin-plugin-preventsleep/releases/download/0.2.0.0/PreventSleep_0.2.0.0.zip",
+        "checksum": "f4abf39afb6844da93ac46288339aaff",
+        "timestamp": "2025-11-30T17:43:45"
+      }
+    ]
+  }
 ]
