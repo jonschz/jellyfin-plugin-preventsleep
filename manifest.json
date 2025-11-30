@@ -3,7 +3,7 @@
     "guid": "d6b0196a-9885-4d87-b25c-562a57ebbe0b",
     "name": "Prevent Sleep",
     "description": "Prevent the system from entering sleep mode when there are active streams.",
-    "overview": "Prevent system sleep",
+    "overview": "Prevent system sleep when streaming",
     "owner": "jonschz",
     "category": "General",
     "versions": [
