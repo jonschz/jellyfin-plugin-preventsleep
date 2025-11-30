@@ -4,13 +4,11 @@ guid: "d6b0196a-9885-4d87-b25c-562a57ebbe0b"
 version: "0.2.0.0"
 targetAbi: "10.9.0.0"
 framework: "net8.0"
-overview: "Prevent the system from entering sleep mode when there are active streams"
-description: >
-  Prevents the system from entering sleep mode when there are active streams.
-  Only Windows is supported.
+overview: "Prevent system sleep when streaming"
+description: "Prevents the system from entering sleep mode when there are active streams."
 category: "General"
 owner: "jellyfin"
 artifacts:
-- "Jellyfin.Plugin.PreventSleep.dll"
-changelog: >
-  changelog
+  - "Jellyfin.Plugin.PreventSleep.dll"
+changelog: |-
+  - changelog

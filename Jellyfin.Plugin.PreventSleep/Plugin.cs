@@ -33,6 +33,9 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     /// <inheritdoc />
     public override Guid Id => Guid.Parse("d6b0196a-9885-4d87-b25c-562a57ebbe0b");
 
+    /// <inheritdoc />
+    public override string Description => "Prevent the system from entering sleep mode when there are active streams.";
+
     /// <summary>
     /// Gets the current plugin instance.
     /// </summary>
