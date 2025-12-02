@@ -16,6 +16,7 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 
 using System;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
@@ -39,6 +40,19 @@ public class EventMonitorEntryPoint : IHostedService
     private SafePowerRequestObject? _powerRequest;
     private TimeSpan _unblockSleepDelay;
     private DateTime _lastCheckin;
+
+    [Flags]
+    private enum ExecutionState : uint
+    {
+        EsSystemRequired = 0x00000001,
+        EsDisplayRequired = 0x00000002,
+        EsAwaymodeRequired = 0x00000040,
+        EsContinuous = 0x80000000
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern ExecutionState SetThreadExecutionState(ExecutionState esFlags);
+
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
@@ -138,6 +152,17 @@ public class EventMonitorEntryPoint : IHostedService
 
         if (timeSinceCheckin < _unblockSleepDelay)
         {
+            // Refresh idle timer
+            try
+            {
+                SetThreadExecutionState(ExecutionState.EsContinuous | ExecutionState.EsSystemRequired);
+                _logger.LogDebug("SetThreadExecutionState succeeded: idle timer refreshed");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to refresh execution state");
+            }
+
             return;
         }
 
@@ -157,6 +182,17 @@ public class EventMonitorEntryPoint : IHostedService
             {
                 _logger.LogError("PowerClearRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
                 return;
+            }
+
+            // Restore normal idle countdown
+            try
+            {
+                SetThreadExecutionState(ExecutionState.EsContinuous);
+                _logger.LogDebug("SetThreadExecutionState succeeded: normal idle countdown restored");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to restore execution state");
             }
 
             _unblockTimer.Dispose();
