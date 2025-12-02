@@ -8,12 +8,12 @@
     "category": "General",
     "versions": [
       {
-        "version": "0.2.0.0",
+        "version": "0.3.0.0",
         "changelog": "Jellyfin 10.9.0",
         "targetAbi": "10.9.0.0",
-        "sourceUrl": "https://github.com/h3llrais3r/jellyfin-plugin-preventsleep/releases/download/0.2.0.0/PreventSleep_0.2.0.0.zip",
-        "checksum": "217c3be2ca51695ca4d5a6d404ac2925",
-        "timestamp": "2025-11-30T17:43:45"
+        "sourceUrl": "https://github.com/h3llrais3r/jellyfin-plugin-preventsleep/releases/download/0.3.0.0/PreventSleep_0.3.0.0.zip",
+        "checksum": "c90629e697d362482b771fbb66a232d6",
+        "timestamp": "2025-12-02T18:49:51"
       }
     ]
   }

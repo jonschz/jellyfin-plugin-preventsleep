@@ -1,7 +1,7 @@
 ---
 name: "Prevent Sleep"
 guid: "d6b0196a-9885-4d87-b25c-562a57ebbe0b"
-version: "0.2.0.0"
+version: "0.3.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 overview: "Prevent system sleep when streaming"
@@ -11,4 +11,5 @@ owner: "jellyfin"
 artifacts:
   - "Jellyfin.Plugin.PreventSleep.dll"
 changelog: |-
-  - changelog
+  - Add jellyfin 10.11.0 support
+  - Reset idle timer during playback to prevent immediate sleep after playback ends
