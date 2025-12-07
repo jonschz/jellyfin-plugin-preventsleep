@@ -6,7 +6,7 @@
     "overview": "Prevent system sleep when streaming",
     "owner": "jonschz",
     "category": "General",
-    "imageUrl": "https://raw.githubusercontent.com/h3llrais3r/jellyfin-plugin-preventsleep/refs/heads/test-manifest/jellyfin-plugin-preventsleep.png",
+    "imageUrl": "https://raw.githubusercontent.com/jonschz/jellyfin-plugin-preventsleep/refs/heads/main/jellyfin-plugin-preventsleep.png",
     "versions": [
       {
         "version": "0.2.0.0",
