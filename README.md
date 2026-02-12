@@ -29,7 +29,7 @@ To install the compiled binary, download the `.dll`, go to your plugin folder (s
 
 ## Known issues
 
-- As of now, only Windows is supported for the OS of the server.
+- Only Jellyfin Server running on Windows is supported. In particular, this plugin will not work on Linux, including Jellyfin docker containers (regardless of the host OS).
 - This plugin might not work correctly if the server is capable of connected standby, see <https://superuser.com/a/1287544>. Testing would be greatly appreciated.
 
 Please don't hesistate to report issues if you find any.
