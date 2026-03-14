@@ -38,9 +38,9 @@ public class EventMonitorEntryPoint : IHostedService
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     private readonly object _powerRequestLock; // TODO: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
     private readonly bool _isDebugLogEnabled;
+    private readonly SafeFileHandle _powerRequest;
     // _unblockTimer is not null if sleep mode is currently blocked
     private Timer? _unblockTimer;
-    private SafeFileHandle? _powerRequest;
     private TimeSpan _unblockSleepDelay;
     private DateTime _lastCheckin;
 
@@ -53,7 +53,7 @@ public class EventMonitorEntryPoint : IHostedService
         _powerRequestLock = new object();
         _lastCheckin = DateTime.MinValue;
         _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
-        REASON_CONTEXT reasonContext = new REASON_CONTEXT
+        var reasonContext = new REASON_CONTEXT
         {
             Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
             Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
@@ -75,7 +75,7 @@ public class EventMonitorEntryPoint : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_powerRequest is not null && !_powerRequest.IsInvalid)
+        if (_powerRequest is { IsInvalid: false, IsClosed: false })
         {
             ApplySettingsFromConfig();
             _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
@@ -120,7 +120,7 @@ public class EventMonitorEntryPoint : IHostedService
         {
             // check _unblockTimer again for thread safety; we only ever change _unblockTimer
             // when _powerRequestLock has been acquired
-            if (_powerRequest is null || _unblockTimer is not null)
+            if (_powerRequest.IsClosed || _unblockTimer is not null)
             {
                 return;
             }
@@ -155,7 +155,7 @@ public class EventMonitorEntryPoint : IHostedService
 
         lock (_powerRequestLock)
         {
-            if (_powerRequest is null || _unblockTimer is null)
+            if (_powerRequest.IsClosed || _unblockTimer is null)
             {
                 return;
             }
@@ -185,8 +185,7 @@ public class EventMonitorEntryPoint : IHostedService
 
         lock (_powerRequestLock)
         {
-            _powerRequest?.Dispose();
-            _powerRequest = null;
+            _powerRequest.Dispose();
         }
 
         return Task.CompletedTask;
