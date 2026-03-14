@@ -1,5 +1,5 @@
 /*
-Copyright(C) 2018, 2023
+Copyright(C) 2018-2026
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -15,7 +15,7 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
@@ -23,7 +23,11 @@ using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using static Jellyfin.Plugin.PreventSleep.VanaraPInvokeKernel32;
+using Microsoft.Win32.SafeHandles;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.System.Power;
+using Windows.Win32.System.Threading;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
@@ -32,11 +36,11 @@ public class EventMonitorEntryPoint : IHostedService
     private const int TimerInterval = 20000;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
-    private readonly object _powerRequestLock;
+    private readonly object _powerRequestLock; // TODO: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
     private readonly bool _isDebugLogEnabled;
-    // _unblockTimer is not null iff sleep mode is currently blocked
+    // _unblockTimer is not null if sleep mode is currently blocked
     private Timer? _unblockTimer;
-    private SafePowerRequestObject? _powerRequest;
+    private SafeFileHandle? _powerRequest;
     private TimeSpan _unblockSleepDelay;
     private DateTime _lastCheckin;
 
@@ -49,20 +53,29 @@ public class EventMonitorEntryPoint : IHostedService
         _powerRequestLock = new object();
         _lastCheckin = DateTime.MinValue;
         _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
-        try
+        REASON_CONTEXT reasonContext = new REASON_CONTEXT
         {
-            using var reasonContext = new REASON_CONTEXT("Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)");
-            _powerRequest = SafePowerCreateRequest(reasonContext);
+            Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
+            Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+        };
+        unsafe
+        {
+            fixed (char* reason = "Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)")
+            {
+                reasonContext.Reason.SimpleReasonString = new PWSTR(reason);
+                _powerRequest = PInvoke.PowerCreateRequest(reasonContext);
+            }
         }
-        catch (Win32Exception e)
+
+        if (_powerRequest.IsInvalid)
         {
-            _logger.LogError("PowerCreateRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+            LogWin32Error("PowerCreateRequest");
         }
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_powerRequest is not null)
+        if (_powerRequest is not null && !_powerRequest.IsInvalid)
         {
             ApplySettingsFromConfig();
             _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
@@ -112,15 +125,14 @@ public class EventMonitorEntryPoint : IHostedService
                 return;
             }
 
-            try
+            if (PInvoke.PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
             {
-                SafePowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
                 _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
             }
-            catch (Win32Exception err)
+            else
             {
-                _logger.LogError("PowerSetRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", err.Message, err.NativeErrorCode);
+                LogWin32Error("PowerSetRequest");
             }
         }
     }
@@ -148,14 +160,13 @@ public class EventMonitorEntryPoint : IHostedService
                 return;
             }
 
-            try
+            if (PInvoke.PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
             {
-                SafePowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired);
                 _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
             }
-            catch (Win32Exception e)
+            else
             {
-                _logger.LogError("PowerClearRequest failed: {Win32ErrorMessage} ({Win32ErrorCode})", e.Message, e.NativeErrorCode);
+                LogWin32Error("PowerClearRequest");
                 return;
             }
 
@@ -179,5 +190,12 @@ public class EventMonitorEntryPoint : IHostedService
         }
 
         return Task.CompletedTask;
+    }
+
+    private void LogWin32Error(string method)
+    {
+        var nativeErrorCode = Marshal.GetLastPInvokeError();
+        var message = Marshal.GetPInvokeErrorMessage(nativeErrorCode);
+        this._logger.LogError("{Method} failed: {Win32ErrorMessage} ({Win32ErrorCode})", method, message, nativeErrorCode);
     }
 }
