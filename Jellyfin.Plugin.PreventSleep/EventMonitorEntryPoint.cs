@@ -195,6 +195,6 @@ public class EventMonitorEntryPoint : IHostedService
     {
         var nativeErrorCode = Marshal.GetLastPInvokeError();
         var message = Marshal.GetPInvokeErrorMessage(nativeErrorCode);
-        this._logger.LogError("{Method} failed: {Win32ErrorMessage} ({Win32ErrorCode})", method, message, nativeErrorCode);
+        _logger.LogError("{Method} failed: {Win32ErrorMessage} ({Win32ErrorCode})", method, message, nativeErrorCode);
     }
 }

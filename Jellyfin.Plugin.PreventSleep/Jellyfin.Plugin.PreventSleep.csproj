@@ -8,6 +8,7 @@
     <Nullable>enable</Nullable>
     <!-- <AnalysisMode>AllDisabledByDefault</AnalysisMode> -->
     <CodeAnalysisRuleSet>../jellyfin.ruleset</CodeAnalysisRuleSet>
+    <!-- Suppress warning that the Windows API calls we use are only supported from Windows Vista onwards -->
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>
 
