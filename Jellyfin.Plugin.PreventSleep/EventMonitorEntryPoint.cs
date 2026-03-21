@@ -53,16 +53,19 @@ public class EventMonitorEntryPoint : IHostedService
         _powerRequestLock = new object();
         _lastCheckin = DateTime.MinValue;
         _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
-        var reasonContext = new REASON_CONTEXT
-        {
-            Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
-            Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
-        };
         unsafe
         {
             fixed (char* reason = "Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)")
             {
-                reasonContext.Reason.SimpleReasonString = new PWSTR(reason);
+                var reasonContext = new REASON_CONTEXT
+                {
+                    Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
+                    Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+                    Reason =
+                    {
+                        SimpleReasonString = new PWSTR(reason)
+                    }
+                };
                 _powerRequest = PInvoke.PowerCreateRequest(reasonContext);
             }
         }
