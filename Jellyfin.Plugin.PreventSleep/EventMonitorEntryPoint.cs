@@ -36,7 +36,7 @@ public class EventMonitorEntryPoint : IHostedService
     private const int TimerInterval = 20000;
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
-    private readonly object _powerRequestLock; // TODO: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
+    private readonly object _powerRequestLock; // TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
     private readonly bool _isDebugLogEnabled;
     private readonly SafeFileHandle _powerRequest;
     // _unblockTimer is not null if sleep mode is currently blocked
