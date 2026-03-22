@@ -1,4 +1,11 @@
 POWER_REQUEST_CONTEXT_VERSION
+GetPwrCapabilities
 PowerClearRequest
 PowerCreateRequest
+PowerGetActiveScheme
+PowerReadACValueIndex
+PowerReadDCValueIndex
+PowerSetActiveScheme
 PowerSetRequest
+PowerWriteACValueIndex
+PowerWriteDCValueIndex
