@@ -34,15 +34,25 @@ namespace Jellyfin.Plugin.PreventSleep;
 public class EventMonitorEntryPoint : IHostedService
 {
     private const int TimerInterval = 20000;
+
+#pragma warning disable SA1310 // Field names should not contain underscore
+    public static readonly Guid GUID_IDLE_RESILIENCY_SUBGROUP = new(0x2e601130, 0x5351, 0x4d9d, 0x8e, 0x4, 0x25, 0x29, 0x66, 0xba, 0xd0, 0x54);
+    public static readonly Guid GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT = new(0x3166bc41, 0x7e98, 0x4e03, 0xb3, 0x4e, 0xec, 0xf, 0x5f, 0x2b, 0x21, 0x8e);
+#pragma warning restore SA1310 // Field names should not contain underscore
+
     private readonly ISessionManager _sessionManager;
     private readonly ILogger<EventMonitorEntryPoint> _logger;
     private readonly object _powerRequestLock; // TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
     private readonly bool _isDebugLogEnabled;
+    private readonly bool _hasModernStandby;
     private readonly SafeFileHandle _powerRequest;
     // _unblockTimer is not null if sleep mode is currently blocked
     private Timer? _unblockTimer;
     private TimeSpan _unblockSleepDelay;
     private DateTime _lastCheckin;
+    private uint _acTimeoutToBeRestored;
+    private uint _dcTimeoutToBeRestored;
+    private Guid _activePowerScheme;
 
     public EventMonitorEntryPoint(
         ISessionManager sessionManager,
@@ -73,6 +83,39 @@ public class EventMonitorEntryPoint : IHostedService
         if (_powerRequest.IsInvalid)
         {
             LogWin32Error("PowerCreateRequest");
+        }
+
+        SYSTEM_POWER_CAPABILITIES capabilities;
+        if (PInvoke.GetPwrCapabilities(out capabilities))
+        {
+            _hasModernStandby = capabilities.AoAc;
+            _logger.LogDebug("Modern Standby support: {HasModernStandby}", _hasModernStandby);
+        }
+        else
+        {
+            LogWin32Error("GetPwrCapabilities");
+            _logger.LogError("Failed to determine whether this system supports Modern Standby. Defaulting to 'no'.");
+            _hasModernStandby = false;
+        }
+
+        if (_hasModernStandby)
+        {
+            // Plan for this scheme:
+            // - get a new "currently active" one once we start blocking sleep
+            // - revert the setting for the stored GUID - it might have changed
+            // TODO: Restore saved values here if appropriate
+
+            UpdateActivePowerScheme();
+
+            // TODO: error handling
+            PInvoke.PowerReadACValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, out var acValueIndex);
+            PInvoke.PowerReadDCValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, out var dcValueIndex);
+
+            // TODO: save backup to settings
+
+            _acTimeoutToBeRestored = acValueIndex;
+            _dcTimeoutToBeRestored = dcValueIndex;
+            _logger.LogDebug("Timeout to be restored: AC: {AcTimeout}; DC: {DcTimeout}", _acTimeoutToBeRestored, _dcTimeoutToBeRestored);
         }
     }
 
@@ -128,6 +171,17 @@ public class EventMonitorEntryPoint : IHostedService
                 return;
             }
 
+            if (_hasModernStandby)
+            {
+                // In case the power scheme has changed since the last invocation
+                UpdateActivePowerScheme();
+                if (!SetPowerRequestTimeouts(uint.MaxValue, uint.MaxValue))
+                {
+                    // Error has already been logged
+                    return;
+                }
+            }
+
             if (PInvoke.PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
             {
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
@@ -163,6 +217,12 @@ public class EventMonitorEntryPoint : IHostedService
                 return;
             }
 
+            if (_hasModernStandby)
+            {
+                // Here we don't care if this succeeds, we just try our best to revert the changes we made
+                SetPowerRequestTimeouts(_acTimeoutToBeRestored, _dcTimeoutToBeRestored);
+            }
+
             if (PInvoke.PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
             {
                 _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
@@ -192,6 +252,57 @@ public class EventMonitorEntryPoint : IHostedService
         }
 
         return Task.CompletedTask;
+    }
+
+    private void UpdateActivePowerScheme()
+    {
+        unsafe
+        {
+            PInvoke.PowerGetActiveScheme(null, out var activePowerSchemePointer);
+            _activePowerScheme = *activePowerSchemePointer;
+        }
+    }
+
+    private bool SetPowerRequestTimeouts(uint acTimeout, uint dcTimeout)
+    {
+        bool succeeded = true;
+
+        WIN32_ERROR error = PInvoke.PowerWriteACValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, acTimeout);
+        if (error == WIN32_ERROR.NO_ERROR)
+        {
+            _logger.LogDebug("Set AC power request timeout to {Value}", acTimeout);
+        }
+        else
+        {
+            _logger.LogError("Failed to overwrite AC power request timeout: {Error}", error);
+            succeeded = false;
+        }
+
+        // Almost the same function, but the signature is different in PInvoke, hence the typecast. Not a surprise given how poorly these are documented...
+        error = (WIN32_ERROR)PInvoke.PowerWriteDCValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, dcTimeout);
+        if (error == WIN32_ERROR.NO_ERROR)
+        {
+            _logger.LogDebug("Set DC power request timeout to {Value}", dcTimeout);
+        }
+        else
+        {
+            _logger.LogError("Failed to overwrite DC power request timeout: {Error}", error);
+            succeeded = false;
+        }
+
+        // TODO: Verify if required (according to Stackoverflow, it is)
+        error = PInvoke.PowerSetActiveScheme(null, _activePowerScheme);
+        if (error == WIN32_ERROR.NO_ERROR)
+        {
+            _logger.LogDebug("Activated modified power scheme");
+        }
+        else
+        {
+            _logger.LogError("Failed to activate modified power scheme: {Error}", error);
+            succeeded = false;
+        }
+
+        return succeeded;
     }
 
     private void LogWin32Error(string method)
