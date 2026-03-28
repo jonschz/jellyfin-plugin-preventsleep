@@ -23,14 +23,13 @@ At this time, this plugin is not part of the Jellyfin project. Use at your own r
 
 ### Manual installation
 
-Compiled binaries can be downloaded [here](https://github.com/jonschz/jellyfin-plugin-preventsleep/releases). Note that the most recent release only works with Jellyfin 10.9 or newer, and Jellyfin does not [automatically update itself](https://github.com/jellyfin/jellyfin-server-windows/issues/30). If you run into issues, check your Jellyfin version first.
+Compiled binaries can be downloaded under [Releases](https://github.com/jonschz/jellyfin-plugin-preventsleep/releases). Note that the most recent release only works with Jellyfin 10.9 or newer, and Jellyfin does not [automatically update itself](https://github.com/jellyfin/jellyfin-server-windows/issues/30). If you run into issues, check your Jellyfin version first.
 
-To install the compiled binary, download the `.dll`, go to your plugin folder (see [here](https://jellyfin.org/docs/general/server/plugins/)), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
+To install the compiled binary, download the `.dll`, go to your [plugin folder](https://jellyfin.org/docs/general/server/plugins/), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
 
 ## Known issues
 
 - Only Jellyfin Server running on Windows is supported. In particular, this plugin will not work on Linux, including Jellyfin docker containers (regardless of the host OS).
-- This plugin might not work correctly if the server is capable of connected standby, see <https://superuser.com/a/1287544>. Testing would be greatly appreciated.
 
 Please don't hesistate to report issues if you find any.
 

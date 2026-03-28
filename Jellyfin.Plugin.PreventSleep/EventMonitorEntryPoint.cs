@@ -15,113 +15,49 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.PreventSleep.Infrastructure;
+using Jellyfin.Plugin.PreventSleep.Interface;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Win32.SafeHandles;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.Power;
-using Windows.Win32.System.Threading;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
-public class EventMonitorEntryPoint : IHostedService
+public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFactory loggerFactory) : IHostedService
 {
     private const int TimerInterval = 20000;
 
-#pragma warning disable SA1310 // Field names should not contain underscore
-    public static readonly Guid GUID_IDLE_RESILIENCY_SUBGROUP = new(0x2e601130, 0x5351, 0x4d9d, 0x8e, 0x4, 0x25, 0x29, 0x66, 0xba, 0xd0, 0x54);
-    public static readonly Guid GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT = new(0x3166bc41, 0x7e98, 0x4e03, 0xb3, 0x4e, 0xec, 0xf, 0x5f, 0x2b, 0x21, 0x8e);
-#pragma warning restore SA1310 // Field names should not contain underscore
+    private readonly ISessionManager _sessionManager = sessionManager;
+    private readonly ILoggerFactory _loggerFactory = loggerFactory;
+    private readonly ILogger<EventMonitorEntryPoint> _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
 
-    private readonly ISessionManager _sessionManager;
-    private readonly ILogger<EventMonitorEntryPoint> _logger;
-    private readonly object _powerRequestLock; // TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
-    private readonly bool _isDebugLogEnabled;
-    private readonly bool _hasModernStandby;
-    private readonly SafeFileHandle _powerRequest;
+    /// <summary>
+    /// Locks access to <see cref="_unblockTimer"/> and <see cref="_powerManagement"/>.
+    /// <br/><br/>
+    /// TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support.
+    /// </summary>
+    private readonly object _powerRequestLock = new();
+
     // _unblockTimer is not null if sleep mode is currently blocked
     private Timer? _unblockTimer;
     private TimeSpan _unblockSleepDelay;
-    private DateTime _lastCheckin;
-    private uint _acTimeoutToBeRestored;
-    private uint _dcTimeoutToBeRestored;
-    private Guid _activePowerScheme;
+    private DateTime _lastCheckin = DateTime.MinValue;
 
-    public EventMonitorEntryPoint(
-        ISessionManager sessionManager,
-        ILoggerFactory loggerFactory)
-    {
-        _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
-        _sessionManager = sessionManager;
-        _powerRequestLock = new object();
-        _lastCheckin = DateTime.MinValue;
-        _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
-        unsafe
-        {
-            fixed (char* reason = "Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)")
-            {
-                var reasonContext = new REASON_CONTEXT
-                {
-                    Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
-                    Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
-                    Reason =
-                    {
-                        SimpleReasonString = new PWSTR(reason)
-                    }
-                };
-                _powerRequest = PInvoke.PowerCreateRequest(reasonContext);
-            }
-        }
-
-        if (_powerRequest.IsInvalid)
-        {
-            LogWin32Error("PowerCreateRequest");
-        }
-
-        SYSTEM_POWER_CAPABILITIES capabilities;
-        if (PInvoke.GetPwrCapabilities(out capabilities))
-        {
-            _hasModernStandby = capabilities.AoAc;
-            _logger.LogDebug("Modern Standby support: {HasModernStandby}", _hasModernStandby);
-        }
-        else
-        {
-            LogWin32Error("GetPwrCapabilities");
-            _logger.LogError("Failed to determine whether this system supports Modern Standby. Defaulting to 'no'.");
-            _hasModernStandby = false;
-        }
-
-        if (_hasModernStandby)
-        {
-            // Plan for this scheme:
-            // - get a new "currently active" one once we start blocking sleep
-            // - revert the setting for the stored GUID - it might have changed
-            // TODO: Restore saved values here if appropriate
-
-            UpdateActivePowerScheme();
-
-            // TODO: error handling
-            PInvoke.PowerReadACValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, out var acValueIndex);
-            PInvoke.PowerReadDCValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, out var dcValueIndex);
-
-            // TODO: save backup to settings
-
-            _acTimeoutToBeRestored = acValueIndex;
-            _dcTimeoutToBeRestored = dcValueIndex;
-            _logger.LogDebug("Timeout to be restored: AC: {AcTimeout}; DC: {DcTimeout}", _acTimeoutToBeRestored, _dcTimeoutToBeRestored);
-        }
-    }
+    /// <summary>
+    /// This value is `null` if the initialisation failed for some reason. In that case, this plugin is in a degenerate state.
+    /// </summary>
+    private IPowerManagement? _powerManagement;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_powerRequest is { IsInvalid: false, IsClosed: false })
+        _powerManagement = CreatePowerManagement();
+        if (_powerManagement is not null)
         {
             ApplySettingsFromConfig();
             _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
@@ -162,36 +98,50 @@ public class EventMonitorEntryPoint : IHostedService
 
     private void BlockSleep()
     {
+        if (_powerManagement is null)
+        {
+            return;
+        }
+
         lock (_powerRequestLock)
         {
-            // check _unblockTimer again for thread safety; we only ever change _unblockTimer
-            // when _powerRequestLock has been acquired
-            if (_powerRequest.IsClosed || _unblockTimer is not null)
+            if (_unblockTimer is not null)
             {
                 return;
             }
 
-            if (_hasModernStandby)
+            try
             {
-                // In case the power scheme has changed since the last invocation
-                UpdateActivePowerScheme();
-                if (!SetPowerRequestTimeouts(uint.MaxValue, uint.MaxValue))
-                {
-                    // Error has already been logged
-                    return;
-                }
-            }
-
-            if (PInvoke.PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
-            {
+                _powerManagement.BlockSleep();
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
-                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
             }
-            else
+            catch (Win32Exception e)
             {
-                LogWin32Error("PowerSetRequest");
+                _logger.LogError(e, "Failed to block sleep: {Error}", e);
             }
         }
+    }
+
+#pragma warning disable CA1859 // It wants us to use the concrete type, but this will not be possible in case we support multiple platforms.
+    private IPowerManagement? CreatePowerManagement()
+#pragma warning restore CA1859
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            try
+            {
+                return new WindowsPowerManagement(_loggerFactory, Plugin.Instance!);
+            }
+            catch (Win32Exception e)
+            {
+                _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
+                return null;
+            }
+        }
+
+        _logger.LogError("Platform is not supported: {Platform}", RuntimeInformation.OSDescription);
+
+        return null;
     }
 
     // Periodically check if the PowerRequest can be cleared.
@@ -199,11 +149,14 @@ public class EventMonitorEntryPoint : IHostedService
     // which happens multiple times per second.
     private void UnblockSleepTimerCallback(object? state)
     {
-        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
-        if (_isDebugLogEnabled)
+        if (_powerManagement is null)
         {
-            _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
+            return;
         }
+
+        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
+
+        _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
 
         if (timeSinceCheckin < _unblockSleepDelay)
         {
@@ -212,25 +165,18 @@ public class EventMonitorEntryPoint : IHostedService
 
         lock (_powerRequestLock)
         {
-            if (_powerRequest.IsClosed || _unblockTimer is null)
+            if (_unblockTimer is null)
             {
                 return;
             }
 
-            if (_hasModernStandby)
+            try
             {
-                // Here we don't care if this succeeds, we just try our best to revert the changes we made
-                SetPowerRequestTimeouts(_acTimeoutToBeRestored, _dcTimeoutToBeRestored);
+                _powerManagement.UnblockSleep();
             }
-
-            if (PInvoke.PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+            catch (Win32Exception e)
             {
-                _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
-            }
-            else
-            {
-                LogWin32Error("PowerClearRequest");
-                return;
+                _logger.LogError(e, "Failed to unblock sleep: {Error}", e);
             }
 
             _unblockTimer.Dispose();
@@ -243,72 +189,27 @@ public class EventMonitorEntryPoint : IHostedService
         _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
         Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
 
-        _unblockTimer?.Dispose();
-        _unblockTimer = null;
-
         lock (_powerRequestLock)
         {
-            _powerRequest.Dispose();
+            if (_unblockTimer is not null)
+            {
+                try
+                {
+                    // Important because it may have to restore persistent changes to the power scheme.
+                    _powerManagement?.UnblockSleep();
+                }
+                catch (Win32Exception e)
+                {
+                    _logger.LogError(e, "Failed to unblock sleep during teardown: {Error}", e);
+                }
+            }
+
+            _powerManagement = null;
+
+            _unblockTimer?.Dispose();
+            _unblockTimer = null;
         }
 
         return Task.CompletedTask;
-    }
-
-    private void UpdateActivePowerScheme()
-    {
-        unsafe
-        {
-            PInvoke.PowerGetActiveScheme(null, out var activePowerSchemePointer);
-            _activePowerScheme = *activePowerSchemePointer;
-        }
-    }
-
-    private bool SetPowerRequestTimeouts(uint acTimeout, uint dcTimeout)
-    {
-        bool succeeded = true;
-
-        WIN32_ERROR error = PInvoke.PowerWriteACValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, acTimeout);
-        if (error == WIN32_ERROR.NO_ERROR)
-        {
-            _logger.LogDebug("Set AC power request timeout to {Value}", acTimeout);
-        }
-        else
-        {
-            _logger.LogError("Failed to overwrite AC power request timeout: {Error}", error);
-            succeeded = false;
-        }
-
-        // Almost the same function, but the signature is different in PInvoke, hence the typecast. Not a surprise given how poorly these are documented...
-        error = (WIN32_ERROR)PInvoke.PowerWriteDCValueIndex(null, _activePowerScheme, GUID_IDLE_RESILIENCY_SUBGROUP, GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT, dcTimeout);
-        if (error == WIN32_ERROR.NO_ERROR)
-        {
-            _logger.LogDebug("Set DC power request timeout to {Value}", dcTimeout);
-        }
-        else
-        {
-            _logger.LogError("Failed to overwrite DC power request timeout: {Error}", error);
-            succeeded = false;
-        }
-
-        // TODO: Verify if required (according to Stackoverflow, it is)
-        error = PInvoke.PowerSetActiveScheme(null, _activePowerScheme);
-        if (error == WIN32_ERROR.NO_ERROR)
-        {
-            _logger.LogDebug("Activated modified power scheme");
-        }
-        else
-        {
-            _logger.LogError("Failed to activate modified power scheme: {Error}", error);
-            succeeded = false;
-        }
-
-        return succeeded;
-    }
-
-    private void LogWin32Error(string method)
-    {
-        var nativeErrorCode = Marshal.GetLastPInvokeError();
-        var message = Marshal.GetPInvokeErrorMessage(nativeErrorCode);
-        _logger.LogError("{Method} failed: {Win32ErrorMessage} ({Win32ErrorCode})", method, message, nativeErrorCode);
     }
 }
