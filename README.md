@@ -27,9 +27,10 @@ Compiled binaries can be downloaded under [Releases](https://github.com/jonschz/
 
 To install the compiled binary, download the `.dll`, go to your [plugin folder](https://jellyfin.org/docs/general/server/plugins/), create a subfolder `Jellyfin.Plugin.PreventSleep`, and paste the `.dll` inside. After a restart of Jellyfin, the plugin should be enabled.
 
-## Known issues
+## Known issues and limitations
 
 - Only Jellyfin Server running on Windows is supported. In particular, this plugin will not work on Linux, including Jellyfin docker containers (regardless of the host OS).
+- If the server runs Windows and supports Modern Standby (which applies to the vast majority of non-ancient Windows laptops), this plugin makes a small but persistent change to the power scheme in order to function properly (that you are very unlikely to even notice, and are reverted whenever they are not needed). See [this issue](https://github.com/jonschz/jellyfin-plugin-preventsleep/issues/18) and [StackOverflow](https://stackoverflow.com/a/23505373) for more details. However, in order to be sure that no changes made by this plugin remain after uninstallation, make sure that Jellyfin performs a clean shutdown when this plugin is uninstalled.
 
 Please don't hesistate to report issues if you find any.
 
