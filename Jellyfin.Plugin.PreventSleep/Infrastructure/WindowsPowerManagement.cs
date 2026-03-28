@@ -36,10 +36,7 @@ public sealed class WindowsPowerManagement : IPowerManagement
         _windowsPowerApi = new WindowsPowerApi(loggerFactory);
         _powerRequest = _windowsPowerApi.PowerCreateRequest();
 
-        // TODO: revert
-        // _supportsModernStandby = SupportsModernStandby();
-        _supportsModernStandby = true;
-
+        _supportsModernStandby = SupportsModernStandby();
         _logger.LogDebug("Modern Standby support: {SupportsModernStandby}", _supportsModernStandby);
 
         if (_supportsModernStandby)
