@@ -80,7 +80,7 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
             Guid result = *activePowerSchemePointer;
             if (PInvoke.LocalFree((HLOCAL)activePowerSchemePointer) != HLOCAL.Null)
             {
-                throw NewWin32Exception(nameof(PInvoke.LocalFree));
+                _logger.LogError("Failed to free memory for GUID: {Code}", Marshal.GetLastPInvokeError());
             }
 
             return result;
