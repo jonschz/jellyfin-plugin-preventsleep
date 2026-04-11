@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 using Windows.Win32;
@@ -14,27 +16,34 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
 {
     private readonly ILogger<WindowsPowerApi> _logger = loggerFactory.CreateLogger<WindowsPowerApi>();
 
-    public void PowerSetSystemRequiredRequest(SafeHandle powerRequest)
+    /// <summary>
+    /// The size of a <see cref="Guid"/> in memory (should be 16).
+    /// Unfortunately, <c>sizeof(Guid)</c> causes problems.
+    /// </summary>
+    private readonly int _guidSize = Guid.Empty.ToByteArray().Length;
+
+    /// <summary>
+    /// Needs to be <c>internal</c> due to type accessibility constraints.
+    /// </summary>
+    /// <returns><see cref="SYSTEM_POWER_CAPABILITIES"/>.</returns>
+    internal SYSTEM_POWER_CAPABILITIES GetPwrCapabilities()
     {
-        if (PInvoke.PowerSetRequest(powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+        if (PInvoke.GetPwrCapabilities(out var capabilities))
         {
-            _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
+            return capabilities;
         }
         else
         {
-            throw NewWin32Exception(nameof(PInvoke.PowerSetRequest));
+            throw NewWin32Exception(nameof(PInvoke.GetPwrCapabilities));
         }
     }
 
-    public void PowerClearSystemRequiredRequest(SafeHandle powerRequest)
+    private void LocalFree(HLOCAL mem)
     {
-        if (PInvoke.PowerClearRequest(powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+        if (HLOCAL.Null != PInvoke.LocalFree(mem))
         {
-            _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
-        }
-        else
-        {
-            throw NewWin32Exception(nameof(PInvoke.PowerClearRequest));
+            // We do not throw here since this is not a critical problem, and is very unlikely to happen anyway
+            _logger.LogError("Failed to free memory for GUID: {Code}", Marshal.GetLastPInvokeError());
         }
     }
 
@@ -63,7 +72,75 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
             throw NewWin32Exception(nameof(PInvoke.PowerCreateRequest));
         }
 
+        _logger.LogDebug("Created power request");
         return powerRequest;
+    }
+
+    public void PowerClearSystemRequiredRequest(SafeHandle powerRequest)
+    {
+        if (PInvoke.PowerClearRequest(powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+        {
+            _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
+        }
+        else
+        {
+            throw NewWin32Exception(nameof(PInvoke.PowerClearRequest));
+        }
+    }
+
+    public void PowerDeleteScheme(Guid scheme)
+    {
+        WithErrorHandling(
+            nameof(PInvoke.PowerDeleteScheme),
+            () => PInvoke.PowerDeleteScheme(null, scheme));
+        _logger.LogDebug("Deleted power scheme {Scheme}", scheme);
+    }
+
+    public Guid PowerDuplicateScheme(Guid scheme)
+    {
+        unsafe
+        {
+            Guid* newPowerSchemePointer = null;
+            WithErrorHandling(
+                nameof(PInvoke.PowerDuplicateScheme),
+                () => PInvoke.PowerDuplicateScheme(null, scheme, ref newPowerSchemePointer));
+            // If we get here, `PowerDuplicateScheme` has succeeded, thus we need to free the pointer.
+            Guid result = *newPowerSchemePointer;
+            LocalFree((HLOCAL)newPowerSchemePointer);
+            _logger.LogDebug("Duplicated power scheme {OldScheme} to {NewScheme}", scheme, result);
+            return result;
+        }
+    }
+
+    public List<Guid> PowerEnumerate()
+    {
+        List<Guid> guids = [];
+        byte[] buffer = new byte[_guidSize];
+        uint size = (uint)_guidSize;
+        bool done = false;
+
+        for (uint i = 0; !done; i++)
+        {
+            WithErrorHandling(
+                nameof(PInvoke.PowerEnumerate),
+                () =>
+                {
+                    WIN32_ERROR result = PInvoke.PowerEnumerate(null, null, null, POWER_DATA_ACCESSOR.ACCESS_SCHEME, i, buffer, ref size);
+                    if (result == WIN32_ERROR.ERROR_NO_MORE_ITEMS)
+                    {
+                        done = true;
+                        return WIN32_ERROR.NO_ERROR;
+                    }
+
+                    return result;
+                });
+            if (!done)
+            {
+                guids.Add(new Guid(buffer));
+            }
+        }
+
+        return guids;
     }
 
     public Guid PowerGetActiveScheme()
@@ -78,95 +155,92 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
                     out activePowerSchemePointer));
             // If we get here, `PowerGetActiveScheme` has succeeded, thus we need to free the pointer.
             Guid result = *activePowerSchemePointer;
-            if (PInvoke.LocalFree((HLOCAL)activePowerSchemePointer) != HLOCAL.Null)
-            {
-                _logger.LogError("Failed to free memory for GUID: {Code}", Marshal.GetLastPInvokeError());
-            }
+            LocalFree((HLOCAL)activePowerSchemePointer);
 
             return result;
         }
     }
 
-    public void PowerSetActiveScheme(Guid activePowerScheme)
+    public string PowerReadFriendlyName(Guid scheme)
+    {
+        uint bufferSize = 0;
+        // No wrapper since this is expected to error with `WIN32_ERROR.ERROR_MORE_DATA`.
+        PInvoke.PowerReadFriendlyName(null, scheme, null, null, null, ref bufferSize);
+
+        byte[] buffer = new byte[bufferSize];
+
+        WithErrorHandling(
+            nameof(PInvoke.PowerReadFriendlyName),
+            () => PInvoke.PowerReadFriendlyName(null, scheme, null, null, buffer, ref bufferSize));
+        string result = Encoding.Unicode.GetString(buffer);
+        return result.TrimEnd('\0'); // There is always at least one null terminator, but there can be multiple
+    }
+
+    public void PowerSetActiveScheme(Guid scheme)
     {
         WithErrorHandling(
             nameof(PInvoke.PowerSetActiveScheme),
             () => PInvoke.PowerSetActiveScheme(
                 null,
-                activePowerScheme));
-        _logger.LogDebug("Activated modified power scheme");
+                scheme));
+        _logger.LogDebug("Activated power scheme {Scheme}", scheme);
     }
 
-    /// <summary>
-    /// Needs to be <c>internal</c> due to type accessibility constraints.
-    /// </summary>
-    /// <returns><see cref="SYSTEM_POWER_CAPABILITIES"/>.</returns>
-    internal SYSTEM_POWER_CAPABILITIES GetPwrCapabilities()
+    public void PowerSetSystemRequiredRequest(SafeHandle powerRequest)
     {
-        if (PInvoke.GetPwrCapabilities(out var capabilities))
+        if (PInvoke.PowerSetRequest(powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
         {
-            return capabilities;
+            _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
         }
         else
         {
-            throw NewWin32Exception(nameof(PInvoke.GetPwrCapabilities));
+            throw NewWin32Exception(nameof(PInvoke.PowerSetRequest));
         }
     }
 
-    public uint ReadCurrentACPowerRequestTimeout(Guid activePowerScheme)
-    {
-        uint acValueIndex = 0;
-        WithErrorHandling(
-            nameof(PInvoke.PowerReadACValueIndex),
-            () => PInvoke.PowerReadACValueIndex(
-                null,
-                activePowerScheme,
-                PInvoke.GUID_IDLE_RESILIENCY_SUBGROUP,
-                PInvoke.GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT,
-                out acValueIndex));
-        return acValueIndex;
-    }
-
-    public uint ReadCurrentDCPowerRequestTimeout(Guid activePowerScheme)
-    {
-        uint dcValueIndex = 0;
-        WithErrorHandling(
-            nameof(PInvoke.PowerReadDCValueIndex),
-            // Due to an oversight by Microsoft, PowerReadDCValueIndex returns a `uint` instead of a `WIN32_ERROR`, hence we need to typecast
-            () => (WIN32_ERROR)PInvoke.PowerReadDCValueIndex(
-                null,
-                activePowerScheme,
-                PInvoke.GUID_IDLE_RESILIENCY_SUBGROUP,
-                PInvoke.GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT,
-                out dcValueIndex));
-        return dcValueIndex;
-    }
-
-    public void WriteCurrentACPowerRequestTimeout(Guid activePowerScheme, uint acTimeout)
+    public void WriteCurrentACPowerRequestTimeout(Guid scheme, uint acTimeout)
     {
         WithErrorHandling(
             nameof(PInvoke.PowerWriteACValueIndex),
             () => PInvoke.PowerWriteACValueIndex(
                 null,
-                activePowerScheme,
+                scheme,
                 PInvoke.GUID_IDLE_RESILIENCY_SUBGROUP,
                 PInvoke.GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT,
                 acTimeout));
-        _logger.LogDebug("Set AC power request timeout to {Value}", acTimeout);
+        _logger.LogDebug("Set AC power request timeout for scheme {Scheme} to {Value}", scheme, acTimeout);
     }
 
-    public void WriteCurrentDCPowerRequestTimeout(Guid activePowerScheme, uint dcTimeout)
+    public void WriteCurrentDCPowerRequestTimeout(Guid scheme, uint dcTimeout)
     {
         WithErrorHandling(
             nameof(PInvoke.PowerWriteDCValueIndex),
             // Due to an oversight by Microsoft, PowerReadDCValueIndex returns a `uint` instead of a `WIN32_ERROR`, hence we need to typecast
             () => (WIN32_ERROR)PInvoke.PowerWriteDCValueIndex(
                 null,
-                activePowerScheme,
+                scheme,
                 PInvoke.GUID_IDLE_RESILIENCY_SUBGROUP,
                 PInvoke.GUID_EXECUTION_REQUIRED_REQUEST_TIMEOUT,
                 dcTimeout));
-        _logger.LogDebug("Set DC power request timeout to {Value}", dcTimeout);
+        _logger.LogDebug("Set DC power request timeout for scheme {Scheme} to {Value}", scheme, dcTimeout);
+    }
+
+    public void PowerWriteDescription(Guid scheme, string description)
+    {
+        byte[] buffer = Encoding.Unicode.GetBytes(description + "\0");
+        WithErrorHandling(
+            nameof(PInvoke.PowerWriteDescription),
+            () => PInvoke.PowerWriteDescription(null, scheme, null, null, buffer));
+        _logger.LogDebug("Changed description of power scheme {Scheme} to {Name}", scheme, description);
+    }
+
+    public void PowerWriteFriendlyName(Guid scheme, string name)
+    {
+        byte[] buffer = Encoding.Unicode.GetBytes(name + "\0");
+        WithErrorHandling(
+            nameof(PInvoke.PowerWriteFriendlyName),
+            () => PInvoke.PowerWriteFriendlyName(null, scheme, null, null, buffer));
+        _logger.LogDebug("Changed friendly name of power scheme {Scheme} to {Name}", scheme, name);
     }
 
     /// <summary>
