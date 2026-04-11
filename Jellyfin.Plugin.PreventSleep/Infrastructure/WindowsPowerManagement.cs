@@ -151,7 +151,7 @@ public sealed class WindowsPowerManagement : IPowerManagement
     }
 
     /// <summary>
-    /// Note: Can show unexpected behavior or throw exceptions if called when sleep is already blocked.
+    /// Note: Can show unexpected behavior or throw exceptions if called when sleep is not blocked.
     /// </summary>
     /// <exception cref="Win32Exception">If any API calls fail.</exception>
     public void UnblockSleep()

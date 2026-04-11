@@ -244,7 +244,7 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
     }
 
     /// <summary>
-    /// To be used after calling a function via PInvoke that can fail but does not return a WIN32_ERROR.
+    /// To be used after calling a function via PInvoke that can fail but does not return a <see cref="WIN32_ERROR"/>.
     /// </summary>
     private static Win32Exception NewWin32Exception(string method)
     {
@@ -254,9 +254,9 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
     }
 
     /// <summary>
-    /// To be used when `fn` returns a WIN32_ERROR.
+    /// To be used when `fn` returns a <see cref="WIN32_ERROR"/>.
     /// </summary>
-    /// <exception cref="Win32Exception">If the returned value is not WIN32_ERROR.NO_ERROR.</exception>
+    /// <exception cref="Win32Exception">If the returned value is not <see cref="WIN32_ERROR.NO_ERROR"/>.</exception>
     private static void WithErrorHandling(string functionName, Func<WIN32_ERROR> fn)
     {
         WIN32_ERROR result = fn();
