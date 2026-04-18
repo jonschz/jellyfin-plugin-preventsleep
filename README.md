@@ -29,7 +29,7 @@ To install the compiled binary, download the `.dll`, go to your [plugin folder](
 
 ## Known issues and limitations
 
-- Only Jellyfin Server running on Windows is supported. In particular, this plugin will not work on Linux, including Jellyfin docker containers (regardless of the host OS).
+- Only Jellyfin Server running on Windows is supported. In particular, this plugin will not work on Linux, MacOS, or Jellyfin docker containers (regardless of the host OS).
 - If the server runs Windows and supports Modern Standby (which applies to the vast majority of non-ancient Windows laptops), this plugin temporarily creates a Power Scheme to reliably prevent sleep while streaming. If this power scheme lingers after terminating Jellyfin, it can be deleted manually. See the [Windows-specific documentation](./docs/Windows.md).
 
 Please don't hesistate to report issues if you find any.

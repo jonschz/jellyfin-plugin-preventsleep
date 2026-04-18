@@ -16,7 +16,7 @@ public sealed class WindowsPowerManagement : IPowerManagement
     private readonly SafeFileHandle _powerRequest;
 
     /// <summary>
-    /// See https://stackoverflow.com/a/23505373 why special handling regarding Modern Standby is needed.
+    /// See <c>/docs/Windows.md</c> why special handling regarding Modern Standby is needed.
     /// </summary>
     private readonly bool _supportsModernStandby;
     private readonly Plugin _plugin;
@@ -66,9 +66,8 @@ public sealed class WindowsPowerManagement : IPowerManagement
     private void DeactivateAndDeleteModifiedPowerSchemes(bool expectHavingToRestore)
     {
         Guid activePowerScheme = _windowsPowerApi.PowerGetActiveScheme();
-        string activePowerSchemeName = _windowsPowerApi.PowerReadFriendlyName(activePowerScheme);
 
-        if (activePowerSchemeName == JellyfinPowerSchemeName)
+        if (IsJellyfinPowerScheme(activePowerScheme))
         {
             if (!expectHavingToRestore)
             {

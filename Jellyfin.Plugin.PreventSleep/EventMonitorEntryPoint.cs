@@ -195,7 +195,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
             {
                 try
                 {
-                    // Important because it may have to restore persistent changes to the power scheme.
+                    // Important because it may have to clean up power schemes.
                     _powerManagement?.UnblockSleep();
                 }
                 catch (Win32Exception e)
