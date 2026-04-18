@@ -10,7 +10,7 @@ namespace Jellyfin.Plugin.PreventSleep.Infrastructure;
 
 public sealed class WindowsPowerManagement : IPowerManagement
 {
-    private const string JellyfinPowerSchemeName = "Temporary Jellyfin Scheme";
+    private const string JellyfinPowerSchemeName = "Temporary Jellyfin PreventSleep Scheme";
     private const string JellyfinPowerSchemeDescription = "Temporary power scheme created by jellyfin-plugin-preventsleep to prevent unexpected shutdowns. Will be deleted automatically when no longer used.";
     private readonly ILogger<WindowsPowerManagement> _logger;
     private readonly SafeFileHandle _powerRequest;
@@ -107,12 +107,14 @@ public sealed class WindowsPowerManagement : IPowerManagement
         _windowsPowerApi.PowerSetActiveScheme(PInvoke.GUID_TYPICAL_POWER_SAVINGS);
     }
 
+    /// <summary>
+    /// Deletes all Jellyfin power schemes in case there are multiple ones.
+    /// </summary>
     private void DeleteAllJellyfinPowerSchemes()
     {
         List<Guid> powerSchemes = _windowsPowerApi.PowerEnumerate();
         foreach (Guid scheme in powerSchemes)
         {
-            // Delete all Jellyfin power schemes in case there are multiple ones
             if (IsJellyfinPowerScheme(scheme))
             {
                 _windowsPowerApi.PowerDeleteScheme(scheme);

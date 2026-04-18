@@ -17,12 +17,6 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
     private readonly ILogger<WindowsPowerApi> _logger = loggerFactory.CreateLogger<WindowsPowerApi>();
 
     /// <summary>
-    /// The size of a <see cref="Guid"/> in memory (should be 16).
-    /// Unfortunately, <c>sizeof(Guid)</c> causes problems.
-    /// </summary>
-    private readonly int _guidSize = Guid.Empty.ToByteArray().Length;
-
-    /// <summary>
     /// Needs to be <c>internal</c> due to type accessibility constraints.
     /// </summary>
     /// <returns><see cref="SYSTEM_POWER_CAPABILITIES"/>.</returns>
@@ -114,9 +108,9 @@ internal class WindowsPowerApi(ILoggerFactory loggerFactory)
 
     public List<Guid> PowerEnumerate()
     {
-        List<Guid> guids = [];
-        byte[] buffer = new byte[_guidSize];
-        uint size = (uint)_guidSize;
+        List<Guid> guids = new(8); // some reasonable default capacity to reduce reallocations
+        byte[] buffer = new byte[Marshal.SizeOf(Guid.Empty)];
+        uint size = (uint)buffer.Length;
         bool done = false;
 
         for (uint i = 0; !done; i++)
