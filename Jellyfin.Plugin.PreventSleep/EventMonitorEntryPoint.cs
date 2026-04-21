@@ -15,70 +15,49 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.PreventSleep.Infrastructure;
+using Jellyfin.Plugin.PreventSleep.Interface;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Session;
 using MediaBrowser.Model.Plugins;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Win32.SafeHandles;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.Power;
-using Windows.Win32.System.Threading;
 
 namespace Jellyfin.Plugin.PreventSleep;
 
-public class EventMonitorEntryPoint : IHostedService
+public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFactory loggerFactory) : IHostedService
 {
     private const int TimerInterval = 20000;
-    private readonly ISessionManager _sessionManager;
-    private readonly ILogger<EventMonitorEntryPoint> _logger;
-    private readonly object _powerRequestLock; // TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support
-    private readonly bool _isDebugLogEnabled;
-    private readonly SafeFileHandle _powerRequest;
+
+    private readonly ISessionManager _sessionManager = sessionManager;
+    private readonly ILoggerFactory _loggerFactory = loggerFactory;
+    private readonly ILogger<EventMonitorEntryPoint> _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
+
+    /// <summary>
+    /// Locks access to <see cref="_unblockTimer"/> and <see cref="_powerManagement"/>.
+    /// <br/><br/>
+    /// TODO #22: replace with System.Threading.Lock when ditching .NET 8/Jellyfin 10.9 support.
+    /// </summary>
+    private readonly object _powerRequestLock = new();
+
     // _unblockTimer is not null if sleep mode is currently blocked
     private Timer? _unblockTimer;
     private TimeSpan _unblockSleepDelay;
-    private DateTime _lastCheckin;
+    private DateTime _lastCheckin = DateTime.MinValue;
 
-    public EventMonitorEntryPoint(
-        ISessionManager sessionManager,
-        ILoggerFactory loggerFactory)
-    {
-        _logger = loggerFactory.CreateLogger<EventMonitorEntryPoint>();
-        _sessionManager = sessionManager;
-        _powerRequestLock = new object();
-        _lastCheckin = DateTime.MinValue;
-        _isDebugLogEnabled = _logger.IsEnabled(LogLevel.Debug);
-        unsafe
-        {
-            fixed (char* reason = "Jellyfin is serving files/waiting for the configured amount of time for further requests (blocked by Plugin.PreventSleep)")
-            {
-                var reasonContext = new REASON_CONTEXT
-                {
-                    Version = PInvoke.POWER_REQUEST_CONTEXT_VERSION,
-                    Flags = POWER_REQUEST_CONTEXT_FLAGS.POWER_REQUEST_CONTEXT_SIMPLE_STRING,
-                    Reason =
-                    {
-                        SimpleReasonString = new PWSTR(reason)
-                    }
-                };
-                _powerRequest = PInvoke.PowerCreateRequest(reasonContext);
-            }
-        }
-
-        if (_powerRequest.IsInvalid)
-        {
-            LogWin32Error("PowerCreateRequest");
-        }
-    }
+    /// <summary>
+    /// This value is `null` if the initialisation failed for some reason. In that case, this plugin is in a degenerate state.
+    /// </summary>
+    private IPowerManagement? _powerManagement;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_powerRequest is { IsInvalid: false, IsClosed: false })
+        _powerManagement = CreatePowerManagement();
+        if (_powerManagement is not null)
         {
             ApplySettingsFromConfig();
             _sessionManager.PlaybackProgress += SessionManager_PlaybackProgress;
@@ -119,25 +98,50 @@ public class EventMonitorEntryPoint : IHostedService
 
     private void BlockSleep()
     {
+        if (_powerManagement is null)
+        {
+            return;
+        }
+
         lock (_powerRequestLock)
         {
-            // check _unblockTimer again for thread safety; we only ever change _unblockTimer
-            // when _powerRequestLock has been acquired
-            if (_powerRequest.IsClosed || _unblockTimer is not null)
+            if (_unblockTimer is not null)
             {
                 return;
             }
 
-            if (PInvoke.PowerSetRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+            try
             {
+                _powerManagement.BlockSleep();
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
-                _logger.LogDebug("PowerSetRequest succeeded: sleep blocked");
             }
-            else
+            catch (Win32Exception e)
             {
-                LogWin32Error("PowerSetRequest");
+                _logger.LogError(e, "Failed to block sleep: {Error}", e);
             }
         }
+    }
+
+#pragma warning disable CA1859 // It wants us to use the concrete type, but this will not be possible in case we support multiple platforms.
+    private IPowerManagement? CreatePowerManagement()
+#pragma warning restore CA1859
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            try
+            {
+                return new WindowsPowerManagement(_loggerFactory, Plugin.Instance!);
+            }
+            catch (Win32Exception e)
+            {
+                _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
+                return null;
+            }
+        }
+
+        _logger.LogError("Platform is not supported: {Platform}", RuntimeInformation.OSDescription);
+
+        return null;
     }
 
     // Periodically check if the PowerRequest can be cleared.
@@ -145,11 +149,14 @@ public class EventMonitorEntryPoint : IHostedService
     // which happens multiple times per second.
     private void UnblockSleepTimerCallback(object? state)
     {
-        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
-        if (_isDebugLogEnabled)
+        if (_powerManagement is null)
         {
-            _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
+            return;
         }
+
+        var timeSinceCheckin = DateTime.UtcNow - _lastCheckin;
+
+        _logger.LogDebug("Time since last checkin: {TimeElapsed}", timeSinceCheckin);
 
         if (timeSinceCheckin < _unblockSleepDelay)
         {
@@ -158,19 +165,18 @@ public class EventMonitorEntryPoint : IHostedService
 
         lock (_powerRequestLock)
         {
-            if (_powerRequest.IsClosed || _unblockTimer is null)
+            if (_unblockTimer is null)
             {
                 return;
             }
 
-            if (PInvoke.PowerClearRequest(_powerRequest, POWER_REQUEST_TYPE.PowerRequestSystemRequired))
+            try
             {
-                _logger.LogDebug("PowerClearRequest succeeded: sleep re-enabled");
+                _powerManagement.UnblockSleep();
             }
-            else
+            catch (Win32Exception e)
             {
-                LogWin32Error("PowerClearRequest");
-                return;
+                _logger.LogError(e, "Failed to unblock sleep: {Error}", e);
             }
 
             _unblockTimer.Dispose();
@@ -183,21 +189,27 @@ public class EventMonitorEntryPoint : IHostedService
         _sessionManager.PlaybackProgress -= SessionManager_PlaybackProgress;
         Plugin.Instance!.ConfigurationChanged -= Plugin_ConfigurationChanged;
 
-        _unblockTimer?.Dispose();
-        _unblockTimer = null;
-
         lock (_powerRequestLock)
         {
-            _powerRequest.Dispose();
+            if (_unblockTimer is not null)
+            {
+                try
+                {
+                    // Important because it may have to clean up power schemes.
+                    _powerManagement?.UnblockSleep();
+                }
+                catch (Win32Exception e)
+                {
+                    _logger.LogError(e, "Failed to unblock sleep during teardown: {Error}", e);
+                }
+            }
+
+            _powerManagement = null;
+
+            _unblockTimer?.Dispose();
+            _unblockTimer = null;
         }
 
         return Task.CompletedTask;
-    }
-
-    private void LogWin32Error(string method)
-    {
-        var nativeErrorCode = Marshal.GetLastPInvokeError();
-        var message = Marshal.GetPInvokeErrorMessage(nativeErrorCode);
-        _logger.LogError("{Method} failed: {Win32ErrorMessage} ({Win32ErrorCode})", method, message, nativeErrorCode);
     }
 }
