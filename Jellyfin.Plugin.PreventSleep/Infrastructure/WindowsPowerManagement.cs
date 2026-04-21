@@ -82,7 +82,7 @@ public sealed class WindowsPowerManagement : IPowerManagement
 
     private void SwitchToNonJellyfinPowerScheme()
     {
-        if (_plugin.Configuration.PreviousPowerScheme is Guid previousPowerScheme && !IsJellyfinPowerScheme(previousPowerScheme))
+        if (_plugin.Configuration.PreviousPowerScheme is { } previousPowerScheme && !IsJellyfinPowerScheme(previousPowerScheme))
         {
             try
             {
