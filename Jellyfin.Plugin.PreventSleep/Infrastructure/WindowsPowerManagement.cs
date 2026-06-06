@@ -8,7 +8,7 @@ using Windows.Win32;
 
 namespace Jellyfin.Plugin.PreventSleep.Infrastructure;
 
-public sealed class WindowsPowerManagement : IPowerManagement
+public sealed class WindowsPowerManagement : IPowerManagement, IDisposable
 {
     private const string JellyfinPowerSchemeName = "Temporary Jellyfin PreventSleep Scheme";
     private const string JellyfinPowerSchemeDescription = "Temporary power scheme created by jellyfin-plugin-preventsleep to prevent unexpected shutdowns. Will be deleted automatically when no longer used.";
@@ -163,5 +163,10 @@ public sealed class WindowsPowerManagement : IPowerManagement
         }
 
         _windowsPowerApi.PowerClearSystemRequiredRequest(_powerRequest);
+    }
+
+    public void Dispose()
+    {
+        _powerRequest.Dispose();
     }
 }
