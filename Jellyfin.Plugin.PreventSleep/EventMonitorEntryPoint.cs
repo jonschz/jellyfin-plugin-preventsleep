@@ -119,6 +119,12 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
             {
                 _logger.LogError(e, "Failed to block sleep: {Error}", e);
             }
+            catch (Exception e) when (e is LinuxDbusException or UnauthorizedAccessException)
+            {
+                _logger.LogError(e, "Failed to block sleep: {Error}", e);
+                _powerManagement.Dispose();
+                _powerManagement = null; // stop log spam
+            }
         }
     }
 
@@ -133,6 +139,19 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                 return new WindowsPowerManagement(_loggerFactory, Plugin.Instance!);
             }
             catch (Win32Exception e)
+            {
+                _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
+                return null;
+            }
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            try
+            {
+                return new LinuxLogindPowerManagement();
+            }
+            catch (Exception e) when (e is DllNotFoundException or LinuxDbusException)
             {
                 _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
                 return null;
