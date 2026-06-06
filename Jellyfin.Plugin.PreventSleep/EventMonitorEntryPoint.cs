@@ -204,6 +204,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                 }
             }
 
+            _powerManagement?.Dispose();
             _powerManagement = null;
 
             _unblockTimer?.Dispose();

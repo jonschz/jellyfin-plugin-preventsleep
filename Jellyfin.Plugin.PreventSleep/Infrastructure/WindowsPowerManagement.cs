@@ -164,4 +164,10 @@ public sealed class WindowsPowerManagement : IPowerManagement
 
         _windowsPowerApi.PowerClearSystemRequiredRequest(_powerRequest);
     }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        _powerRequest.Dispose();
+    }
 }

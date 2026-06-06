@@ -1,6 +1,8 @@
+using System;
+
 namespace Jellyfin.Plugin.PreventSleep.Interface;
 
-public interface IPowerManagement
+public interface IPowerManagement : IDisposable
 {
     public void BlockSleep();
 
