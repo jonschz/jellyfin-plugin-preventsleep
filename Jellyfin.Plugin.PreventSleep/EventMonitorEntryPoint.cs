@@ -115,7 +115,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                 _powerManagement.BlockSleep();
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
             }
-            catch (Win32Exception e)
+            catch (Exception e) when (e is Win32Exception or MacosIoKitException)
             {
                 _logger.LogError(e, "Failed to block sleep: {Error}", e);
             }
@@ -137,6 +137,11 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                 _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
                 return null;
             }
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return new MacosPowerManagement();
         }
 
         _logger.LogError("Platform is not supported: {Platform}", RuntimeInformation.OSDescription);
