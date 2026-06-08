@@ -11,15 +11,14 @@ internal sealed class MacosPowerManagement : IPowerManagement
 
     internal MacosPowerManagement()
     {
-        _kIopmAssertionTypePreventUserIdleSystemSleep = "PreventUserIdleSystemSleep";
+        _kIopmAssertionTypePreventUserIdleSystemSleep = new MacosCfStringRef("PreventUserIdleSystemSleep");
         /*
          * According to https://developer.apple.com/library/archive/qa/qa1340/_index.html
          * and https://github.com/apple-oss-distributions/PowerManagement/blob/main/caffeinate/caffeinate.c#L169
          * these strings' length are capped to 128 characters.
          */
-        _assertionName = new MacosCfStringRef("Prevent Sleep Plugin for Jellyfin", 128);
-        _assertionDetails =
-            new MacosCfStringRef("Serving files/waiting for the configured amount of time for further requests", 128);
+        _assertionName = new MacosCfStringRef("Prevent Sleep Plugin for Jellyfin");
+        _assertionDetails = new MacosCfStringRef("Serving files/waiting for the configured amount of time for further requests");
     }
 
     public void BlockSleep()
