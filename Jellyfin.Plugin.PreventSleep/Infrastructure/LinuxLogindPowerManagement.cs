@@ -1,15 +1,18 @@
 using System;
 using Jellyfin.Plugin.PreventSleep.Interface;
+using Microsoft.Extensions.Logging;
 using Microsoft.Win32.SafeHandles;
 
 namespace Jellyfin.Plugin.PreventSleep.Infrastructure;
 
 internal sealed class LinuxLogindPowerManagement : IPowerManagement
 {
+    private readonly ILogger<LinuxLogindPowerManagement> _logger;
     private SafeFileHandle? _inhibitorHandle;
 
-    public LinuxLogindPowerManagement()
+    public LinuxLogindPowerManagement(ILoggerFactory loggerFactory)
     {
+        _logger = loggerFactory.CreateLogger<LinuxLogindPowerManagement>();
         LinuxDbusApi.MakeThreadSafe();
     }
 
@@ -83,6 +86,7 @@ internal sealed class LinuxLogindPowerManagement : IPowerManagement
             }
 
             _inhibitorHandle = LinuxDbusApi.MessageIterGetFileDescriptor(ref replyIter);
+            _logger.LogDebug("org.freedesktop.login1.Manager.Inhibit succeeded: sleep blocked");
         }
         finally
         {
@@ -111,8 +115,12 @@ internal sealed class LinuxLogindPowerManagement : IPowerManagement
 
     public void UnblockSleep()
     {
-        _inhibitorHandle?.Close();
-        _inhibitorHandle = null;
+        if (_inhibitorHandle is not null)
+        {
+            _inhibitorHandle.Close();
+            _inhibitorHandle = null;
+            _logger.LogDebug("Inhibitor file descriptor closed: sleep re-enabled");
+        }
     }
 
     public void Dispose()

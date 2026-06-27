@@ -149,7 +149,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
         {
             try
             {
-                return new LinuxLogindPowerManagement();
+                return new LinuxLogindPowerManagement(_loggerFactory);
             }
             catch (Exception e) when (e is DllNotFoundException or LinuxDbusException)
             {
