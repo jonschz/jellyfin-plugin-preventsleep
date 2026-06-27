@@ -4,8 +4,6 @@ The Linux landscape is vast, and supporting every variation isn't feasible. So t
 
 This plugin may need additional tweaking or fail to work at all on non-standard Linux setups like Fedora Silverblue or NixOS.
 
-(While not tested, it may be possible to have this plugin work in a Docker container with a Linux host meeting the other requirements listed above if you install libdbus in the container and forward the host's `/run/dbus/system_bus_socket` into it. [**Warning**: this may allow malicious programs running in the container to exercise greater control over the host.])
-
 To see if the plugin is doing its job, play something in Jellyfin, and run the following in a terminal:
 ```shell
 systemd-inhibit --list | grep "Prevent Sleep Plugin for Jellyfin"
@@ -15,7 +13,7 @@ If the plugin is working, you will see something similar to the following in the
 
 > Prevent Sleep Plugin for Jellyfin 963  jellyfin 34866 jellyfin sleep Serving files/waiting for the configured amount of time for further requests block
 
-If you see no such output, look at Jellyfin's logs containing `Jellyfin.Plugin.PreventSleep` in order to pinpoint the issue. 
+If you see no such output, look at Jellyfin's logs containing `Jellyfin.Plugin.PreventSleep` in order to pinpoint the issue.
 
 ## Allowing non-interactive sleep inhibition
 
@@ -46,3 +44,10 @@ polkit.addRule(function(action, subject) {
 ```shell
 sudo systemctl restart jellyfin
 ```
+
+## Docker support
+
+While not tested, it may be possible to have this plugin work in a Docker container with a Linux host meeting the other requirements listed above if you install libdbus in the container and forward the host's `/run/dbus/system_bus_socket` into it.
+
+> [!WARNING]
+> This may allow malicious programs running in the container to exercise greater control over the host.
