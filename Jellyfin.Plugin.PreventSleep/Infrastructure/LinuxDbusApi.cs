@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.PreventSleep.Infrastructure;
 internal static partial class LinuxDbusApi
 {
     private const string LibDbus = "libdbus-1.so.3";
-    private static int _initialised;
+    private static int _threadsInitialised;
 
     internal const int DbusBusSystem = 1;
     internal const int DbusTypeString = 's';

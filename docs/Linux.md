@@ -2,7 +2,7 @@
 
 The Linux landscape is vast, and supporting every variation isn't feasible. So this plugin has prioritised support for one of the more common combinations: a system running systemd (or a logind implementation, like elogind), with libdbus installed, and Jellyfin installed on the host.
 
-This plugin probably will not work on immutable distributions, like Fedora Silverblue.
+This plugin may need additional tweaking or fail to work at all on non-standard Linux setups like Fedora Silverblue or NixOS.
 
 (While not tested, it may be possible to have this plugin work in a Docker container with a Linux host meeting the other requirements listed above if you install libdbus in the container and forward the host's `/run/dbus/system_bus_socket` into it. [**Warning**: this may allow malicious programs running in the container to exercise greater control over the host.])
 
@@ -14,6 +14,8 @@ systemd-inhibit --list | grep "Prevent Sleep Plugin for Jellyfin"
 If the plugin is working, you will see something similar to the following in the command's output:
 
 > Prevent Sleep Plugin for Jellyfin 963  jellyfin 34866 jellyfin sleep Serving files/waiting for the configured amount of time for further requests block
+
+If you see no such output, look at Jellyfin's logs containing `Jellyfin.Plugin.PreventSleep` in order to pinpoint the issue. 
 
 ## Allowing non-interactive sleep inhibition
 
