@@ -1,4 +1,3 @@
-using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -20,7 +19,7 @@ internal static partial class LinuxDbusApi
 
     internal static void MakeThreadSafe()
     {
-        if (Interlocked.Exchange(ref _initialised, 1) == 0)
+        if (Interlocked.Exchange(ref _threadsInitialised, 1) == 0)
         {
             if (!dbus_threads_init_default())
             {
