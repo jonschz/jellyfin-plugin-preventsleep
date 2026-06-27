@@ -97,12 +97,7 @@ internal static partial class LinuxDbusApi
 
     [LibraryImport(LibDbus)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void dbus_message_iter_get_basic(
-        ref DBusMessageIter iter, nint value);
-
-    [LibraryImport(LibDbus)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial void dbus_message_iter_get_basic(
+    private static partial void dbus_message_iter_get_basic(
         ref DBusMessageIter iter, out int value);
 
     [LibraryImport(LibDbus)]
