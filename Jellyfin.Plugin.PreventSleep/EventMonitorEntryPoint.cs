@@ -15,7 +15,6 @@ along with this program. If not, see<http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -115,9 +114,11 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                 _powerManagement.BlockSleep();
                 _unblockTimer = new Timer(UnblockSleepTimerCallback, null, TimerInterval, TimerInterval);
             }
-            catch (Win32Exception e)
+            catch (Exception e)
             {
-                _logger.LogError(e, "Failed to block sleep: {Error}", e);
+                _logger.LogError(e, "Failed to block sleep, will not retry until Jellyfin is restarted: {Error}", e);
+                _powerManagement.Dispose();
+                _powerManagement = null; // stop log spam
             }
         }
     }
@@ -126,22 +127,27 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
     private IPowerManagement? CreatePowerManagement()
 #pragma warning restore CA1859
     {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        try
         {
-            try
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 return new WindowsPowerManagement(_loggerFactory, Plugin.Instance!);
             }
-            catch (Win32Exception e)
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
-                return null;
+                return new LinuxLogindPowerManagement(_loggerFactory);
             }
+
+            _logger.LogError("Platform is not supported: {Platform}", RuntimeInformation.OSDescription);
+
+            return null;
         }
-
-        _logger.LogError("Platform is not supported: {Platform}", RuntimeInformation.OSDescription);
-
-        return null;
+        catch (Exception e)
+        {
+            _logger.LogError(e, "Failed to set up power management. Preventing sleep will not work: {Error}", e);
+            return null;
+        }
     }
 
     // Periodically check if the PowerRequest can be cleared.
@@ -174,7 +180,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
             {
                 _powerManagement.UnblockSleep();
             }
-            catch (Win32Exception e)
+            catch (Exception e)
             {
                 _logger.LogError(e, "Failed to unblock sleep: {Error}", e);
             }
@@ -198,7 +204,7 @@ public class EventMonitorEntryPoint(ISessionManager sessionManager, ILoggerFacto
                     // Important because it may have to clean up power schemes.
                     _powerManagement?.UnblockSleep();
                 }
-                catch (Win32Exception e)
+                catch (Exception e)
                 {
                     _logger.LogError(e, "Failed to unblock sleep during teardown: {Error}", e);
                 }
