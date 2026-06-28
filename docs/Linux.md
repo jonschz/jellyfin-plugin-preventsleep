@@ -15,6 +15,9 @@ If the plugin is working, you will see something similar to the following in the
 
 If you see no such output, look at Jellyfin's logs containing `Jellyfin.Plugin.PreventSleep` in order to pinpoint the issue.
 
+> [!NOTE]
+> Sleep may not be reattempted until the entire configured system sleep duration has passed, *starting* from when the Prevent Sleep Plugin has released its sleep inhibitor. To avoid possibly having your computer stay awake for a long while, make sure the *delay before unblocking sleep* Prevent Sleep plugin setting is set to a low value.
+
 ## Allowing non-interactive sleep inhibition
 
 > [!NOTE]
