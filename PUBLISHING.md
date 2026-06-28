@@ -8,3 +8,4 @@ Since we do not have CI for releases set up yet, the following manual process sh
 4. On your local machine, create the release using `dotnet publish`. Verify that the version in the DLL file matches the expectations (Windows: Right Click -> Properties).
 5. Create a release on GitHub following the pattern of previous releases.
 6. Add and push a git tag for the commit that was released.
+7. Add the new version to [manifest.json](./manifest.json), create a PR, and merge.
