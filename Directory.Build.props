@@ -1,9 +1,10 @@
 <Project>
     <PropertyGroup>
         <VersionPrefix>0.3.0</VersionPrefix>
-        <VersionSuffix>beta.2</VersionSuffix>
+        <!-- Enable for a prerelease, comment out for a full release -->
+        <!-- <VersionSuffix>-beta.2</VersionSuffix> -->
 
-        <Version>$(VersionPrefix)-$(VersionSuffix)</Version>
+        <Version>$(VersionPrefix)$(VersionSuffix)</Version>
         <FileVersion>$(VersionPrefix).0</FileVersion>
         <InformationalVersion>$(Version)</InformationalVersion>
     </PropertyGroup>
