@@ -2,11 +2,19 @@
   {
     "guid": "d6b0196a-9885-4d87-b25c-562a57ebbe0b",
     "name": "Prevent Sleep",
-    "description": "Prevent the system from entering sleep mode when there are active streams. Support is limited to servers running Windows.",
+    "description": "Prevent the system from entering sleep mode when there are active streams.",
     "overview": "Prevent system sleep when streaming",
     "owner": "jonschz",
     "category": "General",
     "versions": [
+      {
+        "version": "0.3.0.0",
+        "changelog": "* Support for Linux. Please read the [instructions](https://github.com/jonschz/jellyfin-plugin-preventsleep/blob/0a8386c74ecac045d398fbd47c3aa21fdc17ad3b/docs/Linux.md) since additional setup will most likely be required, and not every Linux setup is supported.\n* Support for Modern Standby in Windows",
+        "targetAbi": "10.9.0.0",
+        "sourceUrl": "https://github.com/jonschz/jellyfin-plugin-preventsleep/releases/download/v0.3.0-repository/Jellyfin.Plugin.PreventSleep_0.3.0.0.zip",
+        "checksum": "27c4c2d953769e6b88c03437f8851576",
+        "timestamp": "2026-07-04T13:00:00"
+      },
       {
         "version": "0.2.0.0",
         "changelog": "* Support for Jellyfin 10.9. Note that this version is **not** compatible with Jellyfin 10.8 or older.",
