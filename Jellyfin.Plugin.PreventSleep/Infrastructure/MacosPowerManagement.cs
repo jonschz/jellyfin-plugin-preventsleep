@@ -32,7 +32,7 @@ internal sealed class MacosPowerManagement : IPowerManagement
         }
 
         _sleepAssertion = MacosIopmAssertion.Create(_kIopmAssertionTypePreventUserIdleSystemSleep, _assertionName, _assertionDetails);
-        _logger.LogDebug("IOPMAssertionCreateWithDescription succeeded: sleep blocked");
+        _logger.LogDebug("IOPM assertion created successfully: sleep blocked");
     }
 
     public void UnblockSleep()
@@ -41,7 +41,7 @@ internal sealed class MacosPowerManagement : IPowerManagement
         {
             _sleepAssertion.Close();
             _sleepAssertion = null;
-            _logger.LogDebug("Power assertion released: sleep re-enabled");
+            _logger.LogDebug("IOPM assertion released: sleep re-enabled");
         }
     }
 
